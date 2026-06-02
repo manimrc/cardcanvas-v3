@@ -34,7 +34,8 @@ import {
   Heading1, Heading2, Heading3, List, ListOrdered,
   Quote, Code, AlignLeft, AlignCenter, AlignRight,
   Highlighter, X, Undo, Redo,
-  BookOpen, Minimize2, Table as TableIcon, Mic
+  BookOpen, Minimize2, Table as TableIcon, Mic,
+  Pencil, Check
 } from 'lucide-react';
 
 /** Heuristic: does this clipboard text look like markdown? */
@@ -200,6 +201,7 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
   const [tagsInput, setTagsInput] = useState((card.tags || []).join(', '));
   const [contentUpdated, setContentUpdated] = useState(0);
   const [focusMode, setFocusMode] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
   const overlayRef = useRef<HTMLDivElement>(null);
 
   const editor = useEditor({
@@ -326,6 +328,13 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
     return () => editorEl.removeEventListener('paste', onPaste, true);
   }, [editor]);
 
+  // Toggle editor editability based on isEditing state
+  useEffect(() => {
+    if (!editor) return;
+    editor.setEditable(isEditing);
+  }, [editor, isEditing]);
+
+
   const toggleFocusMode = useCallback(() => {
     if (!focusMode) {
       // Enter focus mode: make editor read-only + browser fullscreen
@@ -384,6 +393,14 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
       });
     }
   }, [card, title, color, url, tagsInput, editor, onSave]);
+
+  const toggleEditMode = useCallback(() => {
+    if (isEditing) {
+      // Leaving edit mode → auto-save
+      autoSave();
+    }
+    setIsEditing(prev => !prev);
+  }, [isEditing, autoSave]);
 
   const handleClose = useCallback(() => {
     autoSave();
@@ -540,113 +557,149 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
     );
   }
 
+  // Parse tags for display
+  const parsedTagsForDisplay = tagsInput
+    .split(',')
+    .map(t => t.trim())
+    .filter(Boolean);
+
   return (
     <div ref={overlayRef} className="modal-overlay" onClick={handleClose}>
       <div className="editor-modal" onClick={e => e.stopPropagation()}>
+        {/* ---- Compact Header Bar ---- */}
         <div className="editor-modal-header">
-          <input
-            value={title}
-            onChange={e => setTitle(e.target.value)}
-            placeholder="Card title..."
-          />
-          <div className="editor-top-actions">
-            <div className="editor-top-color-picker">
-              {CARD_COLORS.map(c => (
-                <button
-                  key={c.value}
-                  type="button"
-                  className={`editor-top-color-dot${color === c.value ? ' active' : ''}`}
-                  style={{ background: c.value }}
-                  onClick={() => setColor(c.value)}
-                  title={c.name}
-                />
-              ))}
-            </div>
-            <button
-              className="editor-top-action-btn focus-mode-btn"
-              onClick={toggleFocusMode}
-              title="Focus mode — distraction-free reading (hides browser UI)"
-            >
-              <BookOpen size={14} /> Focus
-            </button>
-            <button className="editor-close-btn" onClick={handleClose}><X size={16} /></button>
+          <div className="editor-top-color-picker">
+            {CARD_COLORS.map(c => (
+              <button
+                key={c.value}
+                type="button"
+                className={`editor-top-color-dot${color === c.value ? ' active' : ''}`}
+                style={{ background: c.value }}
+                onClick={() => setColor(c.value)}
+                title={c.name}
+              />
+            ))}
           </div>
+          <div className="header-spacer" />
+          <button
+            className={`editor-edit-toggle-btn${isEditing ? ' editing' : ''}`}
+            onClick={toggleEditMode}
+            title={isEditing ? 'Done editing' : 'Edit document'}
+          >
+            {isEditing ? <><Check size={14} /> Done</> : <><Pencil size={14} /> Edit</>}
+          </button>
+          <button
+            className="editor-top-action-btn focus-mode-btn"
+            onClick={toggleFocusMode}
+            title="Focus mode — distraction-free reading"
+          >
+            <BookOpen size={14} />
+          </button>
+          <button className="editor-close-btn" onClick={handleClose}><X size={16} /></button>
         </div>
 
-        {card.type !== 'richtext' && (
-          <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'rgba(0,0,0,0.1)' }}>
-            <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>
-              {card.type === 'image' ? 'IMAGE URL' : card.type === 'pdf' ? 'PDF URL' : card.type === 'link' ? 'LINK URL' : 'SOURCE URL'}
-            </label>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <input
-                className="inline-input"
-                value={url}
-                onChange={e => setUrl(e.target.value)}
-                placeholder={`https://... or upload a file`}
-              />
-              {(card.type === 'image' || card.type === 'pdf') && (
-                <label className="editor-save-btn" style={{ cursor: 'pointer', padding: '6px 12px', background: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: '1px solid var(--border-light)' }}>
-                  Upload
-                  <input type="file" style={{ display: 'none' }} accept={card.type === 'image' ? 'image/*' : 'application/pdf'} onChange={handleFileUpload} />
-                </label>
-              )}
-            </div>
+        {/* ---- Formatting Toolbar (Edit Mode Only) ---- */}
+        {isEditing && (
+          <div className="editor-toolbar">
+            <button className={`editor-toolbar-btn${editor.isActive('bold') ? ' active' : ''}`} onClick={() => editor.chain().focus().toggleBold().run()}><Bold size={15} /></button>
+            <button className={`editor-toolbar-btn${editor.isActive('italic') ? ' active' : ''}`} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic size={15} /></button>
+            <button className={`editor-toolbar-btn${editor.isActive('underline') ? ' active' : ''}`} onClick={() => editor.chain().focus().toggleUnderline().run()}><UnderlineIcon size={15} /></button>
+            <button className={`editor-toolbar-btn${editor.isActive('strike') ? ' active' : ''}`} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough size={15} /></button>
+            <button className={`editor-toolbar-btn${editor.isActive('highlight') ? ' active' : ''}`} onClick={() => editor.chain().focus().toggleHighlight().run()}><Highlighter size={15} /></button>
+            <div className="editor-toolbar-divider" />
+            <button className={`editor-toolbar-btn${editor.isActive('heading', { level: 1 }) ? ' active' : ''}`} onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}><Heading1 size={15} /></button>
+            <button className={`editor-toolbar-btn${editor.isActive('heading', { level: 2 }) ? ' active' : ''}`} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}><Heading2 size={15} /></button>
+            <button className={`editor-toolbar-btn${editor.isActive('heading', { level: 3 }) ? ' active' : ''}`} onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}><Heading3 size={15} /></button>
+            <div className="editor-toolbar-divider" />
+            <button className={`editor-toolbar-btn${editor.isActive('bulletList') ? ' active' : ''}`} onClick={() => editor.chain().focus().toggleBulletList().run()}><List size={15} /></button>
+            <button className={`editor-toolbar-btn${editor.isActive('orderedList') ? ' active' : ''}`} onClick={() => editor.chain().focus().toggleOrderedList().run()}><ListOrdered size={15} /></button>
+            <button className={`editor-toolbar-btn${editor.isActive('blockquote') ? ' active' : ''}`} onClick={() => editor.chain().focus().toggleBlockquote().run()}><Quote size={15} /></button>
+            <button className={`editor-toolbar-btn${editor.isActive('codeBlock') ? ' active' : ''}`} onClick={() => editor.chain().focus().toggleCodeBlock().run()}><Code size={15} /></button>
+            <div className="editor-toolbar-divider" />
+            <button
+              className="editor-toolbar-btn"
+              onClick={() => {
+                if (editor && user) {
+                  editor.chain().focus().insertContent({
+                    type: 'voiceNote',
+                    attrs: { src: '', duration: '00:00', userId: user.id }
+                  }).run();
+                }
+              }}
+              title="Insert voice note reflection"
+            >
+              <Mic size={15} />
+            </button>
+            <button className="editor-toolbar-btn" onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} title="Insert table"><TableIcon size={15} /></button>
+            <div className="editor-toolbar-divider" />
+            <button className={`editor-toolbar-btn${editor.isActive({ textAlign: 'left' }) ? ' active' : ''}`} onClick={() => editor.chain().focus().setTextAlign('left').run()}><AlignLeft size={15} /></button>
+            <button className={`editor-toolbar-btn${editor.isActive({ textAlign: 'center' }) ? ' active' : ''}`} onClick={() => editor.chain().focus().setTextAlign('center').run()}><AlignCenter size={15} /></button>
+            <button className={`editor-toolbar-btn${editor.isActive({ textAlign: 'right' }) ? ' active' : ''}`} onClick={() => editor.chain().focus().setTextAlign('right').run()}><AlignRight size={15} /></button>
+            <div className="editor-toolbar-divider" />
+            <button className="editor-toolbar-btn" onClick={() => editor.chain().focus().undo().run()}><Undo size={15} /></button>
+            <button className="editor-toolbar-btn" onClick={() => editor.chain().focus().redo().run()}><Redo size={15} /></button>
           </div>
         )}
 
-        <div style={{ padding: '0 20px 12px', borderBottom: '1px solid var(--border)', background: 'rgba(0,0,0,0.1)' }}>
-          <label style={{ display: 'block', marginBottom: '6px', fontSize: '10px', color: 'var(--text-muted)', fontWeight: 600 }}>TAGS (COMMA SEPARATED)</label>
-          <input
-            className="inline-input"
-            value={tagsInput}
-            onChange={e => setTagsInput(e.target.value)}
-            placeholder="e.g. urgent, research, draft"
-          />
-        </div>
-
-        <div className="editor-toolbar">
-          <button className={`editor-toolbar-btn${editor.isActive('bold') ? ' active' : ''}`} onClick={() => editor.chain().focus().toggleBold().run()}><Bold size={15} /></button>
-          <button className={`editor-toolbar-btn${editor.isActive('italic') ? ' active' : ''}`} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic size={15} /></button>
-          <button className={`editor-toolbar-btn${editor.isActive('underline') ? ' active' : ''}`} onClick={() => editor.chain().focus().toggleUnderline().run()}><UnderlineIcon size={15} /></button>
-          <button className={`editor-toolbar-btn${editor.isActive('strike') ? ' active' : ''}`} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough size={15} /></button>
-          <button className={`editor-toolbar-btn${editor.isActive('highlight') ? ' active' : ''}`} onClick={() => editor.chain().focus().toggleHighlight().run()}><Highlighter size={15} /></button>
-          <div className="editor-toolbar-divider" />
-          <button className={`editor-toolbar-btn${editor.isActive('heading', { level: 1 }) ? ' active' : ''}`} onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}><Heading1 size={15} /></button>
-          <button className={`editor-toolbar-btn${editor.isActive('heading', { level: 2 }) ? ' active' : ''}`} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}><Heading2 size={15} /></button>
-          <button className={`editor-toolbar-btn${editor.isActive('heading', { level: 3 }) ? ' active' : ''}`} onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}><Heading3 size={15} /></button>
-          <div className="editor-toolbar-divider" />
-          <button className={`editor-toolbar-btn${editor.isActive('bulletList') ? ' active' : ''}`} onClick={() => editor.chain().focus().toggleBulletList().run()}><List size={15} /></button>
-          <button className={`editor-toolbar-btn${editor.isActive('orderedList') ? ' active' : ''}`} onClick={() => editor.chain().focus().toggleOrderedList().run()}><ListOrdered size={15} /></button>
-          <button className={`editor-toolbar-btn${editor.isActive('blockquote') ? ' active' : ''}`} onClick={() => editor.chain().focus().toggleBlockquote().run()}><Quote size={15} /></button>
-          <button className={`editor-toolbar-btn${editor.isActive('codeBlock') ? ' active' : ''}`} onClick={() => editor.chain().focus().toggleCodeBlock().run()}><Code size={15} /></button>
-          <div className="editor-toolbar-divider" />
-          <button
-            className="editor-toolbar-btn"
-            onClick={() => {
-              if (editor && user) {
-                editor.chain().focus().insertContent({
-                  type: 'voiceNote',
-                  attrs: { src: '', duration: '00:00', userId: user.id }
-                }).run();
-              }
-            }}
-            title="Insert voice note reflection"
-          >
-            <Mic size={15} />
-          </button>
-          <button className="editor-toolbar-btn" onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} title="Insert table"><TableIcon size={15} /></button>
-          <div className="editor-toolbar-divider" />
-          <button className={`editor-toolbar-btn${editor.isActive({ textAlign: 'left' }) ? ' active' : ''}`} onClick={() => editor.chain().focus().setTextAlign('left').run()}><AlignLeft size={15} /></button>
-          <button className={`editor-toolbar-btn${editor.isActive({ textAlign: 'center' }) ? ' active' : ''}`} onClick={() => editor.chain().focus().setTextAlign('center').run()}><AlignCenter size={15} /></button>
-          <button className={`editor-toolbar-btn${editor.isActive({ textAlign: 'right' }) ? ' active' : ''}`} onClick={() => editor.chain().focus().setTextAlign('right').run()}><AlignRight size={15} /></button>
-          <div className="editor-toolbar-divider" />
-          <button className="editor-toolbar-btn" onClick={() => editor.chain().focus().undo().run()}><Undo size={15} /></button>
-          <button className="editor-toolbar-btn" onClick={() => editor.chain().focus().redo().run()}><Redo size={15} /></button>
-        </div>
-
+        {/* ---- Page Body ---- */}
         <div className="editor-content" style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
-          <EditorContent editor={editor} />
+          <div className="editor-readable-column">
+            {/* URL row for non-richtext cards */}
+            {card.type !== 'richtext' && isEditing && (
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', marginBottom: 4, fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                  {card.type === 'image' ? 'Image URL' : card.type === 'pdf' ? 'PDF URL' : card.type === 'link' ? 'Link URL' : 'Source URL'}
+                </label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    className="inline-input"
+                    value={url}
+                    onChange={e => setUrl(e.target.value)}
+                    placeholder="https://... or upload a file"
+                  />
+                  {(card.type === 'image' || card.type === 'pdf') && (
+                    <label className="editor-save-btn" style={{ cursor: 'pointer', padding: '6px 12px', background: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: '1px solid var(--border-light)' }}>
+                      Upload
+                      <input type="file" style={{ display: 'none' }} accept={card.type === 'image' ? 'image/*' : 'application/pdf'} onChange={handleFileUpload} />
+                    </label>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Title */}
+            {isEditing ? (
+              <input
+                className="doc-title-input"
+                value={title}
+                onChange={e => setTitle(e.target.value)}
+                placeholder="Untitled"
+              />
+            ) : (
+              <h1 className="doc-title-display">{title || 'Untitled'}</h1>
+            )}
+
+            {/* Tags */}
+            {isEditing ? (
+              <input
+                className="doc-tags-input"
+                value={tagsInput}
+                onChange={e => setTagsInput(e.target.value)}
+                placeholder="Tags (comma separated): e.g. urgent, research, draft"
+              />
+            ) : (
+              parsedTagsForDisplay.length > 0 && (
+                <div className="doc-tags-row">
+                  {parsedTagsForDisplay.map((tag, i) => (
+                    <span key={i} className="tag-badge">{tag}</span>
+                  ))}
+                </div>
+              )
+            )}
+
+            {/* Editor Content */}
+            <EditorContent editor={editor} />
+          </div>
         </div>
 
       </div>
