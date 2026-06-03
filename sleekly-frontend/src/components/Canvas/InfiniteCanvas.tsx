@@ -12,7 +12,7 @@ import { Card } from '@/types';
 import CanvasCard from './CanvasCard';
 import ContextMenu from '../ContextMenu';
 import ConfirmDialog from '../ConfirmDialog';
-import { findNonOverlappingPosition } from '@/lib/collision';
+import { findNonOverlappingPosition, hasOverlap } from '@/lib/collision';
 
 export type InfiniteCanvasHandle = {
   getScrollContainer: () => HTMLDivElement | null;
@@ -186,9 +186,26 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, Props>(function Infinite
   const handleResize = useCallback(
     (id: string, width: number, height: number) => {
       if (readOnly) return;
-      onUpdateCard({ id, width, height });
+      const card = cards.find(c => c.id === id);
+      if (!card) return;
+
+      const proposedRect = { x: card.x, y: card.y, width, height };
+
+      if (!hasOverlap(proposedRect, cards, id)) {
+        onUpdateCard({ id, width, height });
+      } else {
+        const widthOk = !hasOverlap({ x: card.x, y: card.y, width, height: card.height }, cards, id);
+        const heightOk = !hasOverlap({ x: card.x, y: card.y, width: card.width, height }, cards, id);
+
+        const finalW = widthOk ? width : card.width;
+        const finalH = heightOk ? height : card.height;
+
+        if (finalW !== card.width || finalH !== card.height) {
+          onUpdateCard({ id, width: finalW, height: finalH });
+        }
+      }
     },
-    [onUpdateCard, readOnly]
+    [onUpdateCard, readOnly, cards]
   );
 
   const handleCanvasDoubleClick = useCallback(

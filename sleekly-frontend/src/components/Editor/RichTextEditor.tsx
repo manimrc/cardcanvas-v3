@@ -35,7 +35,7 @@ import {
   Quote, Code, AlignLeft, AlignCenter, AlignRight,
   Highlighter, X, Undo, Redo,
   BookOpen, Minimize2, Table as TableIcon, Mic,
-  Pencil, Check
+  Pencil, Check, Tag, ZoomIn, ZoomOut, Maximize2
 } from 'lucide-react';
 
 /** Heuristic: does this clipboard text look like markdown? */
@@ -201,8 +201,14 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
   const [tagsInput, setTagsInput] = useState((card.tags || []).join(', '));
   const [contentUpdated, setContentUpdated] = useState(0);
   const [focusMode, setFocusMode] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
+  const [isEditing, setIsEditing] = useState(true);
+  const [headings, setHeadings] = useState<{ id: string; text: string; level: number; pos: number }[]>([]);
+  const [zoomScale, setZoomScale] = useState(1);
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStart = useRef({ x: 0, y: 0 });
   const overlayRef = useRef<HTMLDivElement>(null);
+
 
   const editor = useEditor({
     extensions: [
@@ -265,6 +271,87 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
       },
     },
   });
+
+  useEffect(() => {
+    if (!editor) return;
+
+    const updateHeadings = () => {
+      const list: typeof headings = [];
+      editor.state.doc.descendants((node: any, pos: number) => {
+        if (node.type.name === 'heading') {
+          list.push({
+            id: `heading-${pos}`,
+            text: node.textContent || 'Untitled Section',
+            level: node.attrs.level,
+            pos,
+          });
+        }
+      });
+      setHeadings(list);
+    };
+
+    updateHeadings();
+
+    editor.on('update', updateHeadings);
+    return () => {
+      editor.off('update', updateHeadings);
+    };
+  }, [editor]);
+
+  const scrollToHeading = useCallback((pos: number) => {
+    if (!editor) return;
+    editor.commands.setTextSelection(pos);
+    editor.commands.focus();
+    const domNode = editor.view.nodeDOM(pos);
+    if (domNode instanceof HTMLElement) {
+      domNode.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [editor]);
+
+  const handleImageMouseDown = useCallback((e: React.MouseEvent) => {
+    if (zoomScale <= 1) return;
+    e.preventDefault();
+    setIsDragging(true);
+    dragStart.current = { x: e.clientX - panOffset.x, y: e.clientY - panOffset.y };
+  }, [zoomScale, panOffset]);
+
+  const handleImageMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!isDragging) return;
+    const nextX = e.clientX - dragStart.current.x;
+    const nextY = e.clientY - dragStart.current.y;
+    setPanOffset({ x: nextX, y: nextY });
+  }, [isDragging]);
+
+  const handleImageMouseUp = useCallback(() => {
+    setIsDragging(false);
+  }, []);
+
+  const handleZoomIn = useCallback(() => {
+    setZoomScale(prev => Math.min(prev + 0.25, 4));
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    setZoomScale(prev => {
+      const next = Math.max(prev - 0.25, 1);
+      if (next === 1) {
+        setPanOffset({ x: 0, y: 0 });
+      }
+      return next;
+    });
+  }, []);
+
+  const handleZoomReset = useCallback(() => {
+    setZoomScale(1);
+    setPanOffset({ x: 0, y: 0 });
+  }, []);
+
+  const handleImageDoubleClick = useCallback(() => {
+    if (zoomScale > 1) {
+      handleZoomReset();
+    } else {
+      setZoomScale(2);
+    }
+  }, [zoomScale, handleZoomReset]);
 
   // Dynamically update handlePaste and handleDrop to prevent stale closure bugs in useEditor
   useEffect(() => {
@@ -486,7 +573,77 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
           {card.type === 'pdf' ? (
             <iframe src={`${resolveMediaUrl(url)}#view=FitH&pagemode=thumbs`} style={{ width: '100%', height: '100%', border: 'none', borderRadius: 8, background: '#fff' }} title={title} />
           ) : (
-            <img src={resolveMediaUrl(url)} alt={title} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 8 }} />
+            <div 
+              style={{
+                position: 'relative',
+                width: '100%',
+                height: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                overflow: 'hidden',
+                cursor: zoomScale > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default'
+              }}
+              onMouseDown={handleImageMouseDown}
+              onMouseMove={handleImageMouseMove}
+              onMouseUp={handleImageMouseUp}
+              onMouseLeave={handleImageMouseUp}
+            >
+              <img
+                src={resolveMediaUrl(url)}
+                alt={title}
+                onDoubleClick={handleImageDoubleClick}
+                style={{
+                  transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoomScale})`,
+                  transition: isDragging ? 'none' : 'transform 0.15s ease-out',
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                  objectFit: 'contain',
+                  borderRadius: 8,
+                  userSelect: 'none',
+                  pointerEvents: 'none'
+                }}
+                draggable={false}
+              />
+              
+              <div className="image-zoom-controls" onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}>
+                <button
+                  type="button"
+                  className="zoom-control-btn"
+                  onClick={handleZoomOut}
+                  title="Zoom Out"
+                >
+                  <ZoomOut size={16} />
+                </button>
+                
+                <span className="zoom-percentage">
+                  {Math.round(zoomScale * 100)}%
+                </span>
+                
+                <button
+                  type="button"
+                  className="zoom-control-btn"
+                  onClick={handleZoomIn}
+                  title="Zoom In"
+                >
+                  <ZoomIn size={16} />
+                </button>
+                
+                {zoomScale !== 1 && (
+                  <>
+                    <div className="zoom-control-divider" />
+                    <button
+                      type="button"
+                      className="zoom-control-btn"
+                      onClick={handleZoomReset}
+                      title="Fit to Screen"
+                    >
+                      <Maximize2 size={15} />
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
           )}
         </div>
       </div>
@@ -581,13 +738,7 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
             ))}
           </div>
           <div className="header-spacer" />
-          <button
-            className={`editor-edit-toggle-btn${isEditing ? ' editing' : ''}`}
-            onClick={toggleEditMode}
-            title={isEditing ? 'Done editing' : 'Edit document'}
-          >
-            {isEditing ? <><Check size={14} /> Done</> : <><Pencil size={14} /> Edit</>}
-          </button>
+
           <button
             className="editor-top-action-btn focus-mode-btn"
             onClick={toggleFocusMode}
@@ -642,63 +793,79 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
         )}
 
         {/* ---- Page Body ---- */}
-        <div className="editor-content" style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
-          <div className="editor-readable-column">
-            {/* URL row for non-richtext cards */}
-            {card.type !== 'richtext' && isEditing && (
-              <div style={{ marginBottom: 12 }}>
-                <label style={{ display: 'block', marginBottom: 4, fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                  {card.type === 'image' ? 'Image URL' : card.type === 'pdf' ? 'PDF URL' : card.type === 'link' ? 'Link URL' : 'Source URL'}
-                </label>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <input
-                    className="inline-input"
-                    value={url}
-                    onChange={e => setUrl(e.target.value)}
-                    placeholder="https://... or upload a file"
-                  />
-                  {(card.type === 'image' || card.type === 'pdf') && (
-                    <label className="editor-save-btn" style={{ cursor: 'pointer', padding: '6px 12px', background: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: '1px solid var(--border-light)' }}>
-                      Upload
-                      <input type="file" style={{ display: 'none' }} accept={card.type === 'image' ? 'image/*' : 'application/pdf'} onChange={handleFileUpload} />
-                    </label>
-                  )}
+        <div className="editor-modal-body">
+          <div className="editor-content" style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
+            <div className="editor-readable-column">
+              {/* URL row for non-richtext cards */}
+              {card.type !== 'richtext' && isEditing && (
+                <div style={{ marginBottom: 12 }}>
+                  <label style={{ display: 'block', marginBottom: 4, fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                    {card.type === 'image' ? 'Image URL' : card.type === 'pdf' ? 'PDF URL' : card.type === 'link' ? 'Link URL' : 'Source URL'}
+                  </label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input
+                      className="inline-input"
+                      value={url}
+                      onChange={e => setUrl(e.target.value)}
+                      placeholder="https://... or upload a file"
+                    />
+                    {(card.type === 'image' || card.type === 'pdf') && (
+                      <label className="editor-save-btn" style={{ cursor: 'pointer', padding: '6px 12px', background: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: '1px solid var(--border-light)' }}>
+                        Upload
+                        <input type="file" style={{ display: 'none' }} accept={card.type === 'image' ? 'image/*' : 'application/pdf'} onChange={handleFileUpload} />
+                      </label>
+                    )}
+                  </div>
                 </div>
+              )}
+
+              {/* Title */}
+              {isEditing ? (
+                <input
+                  className="doc-title-input"
+                  value={title}
+                  onChange={e => setTitle(e.target.value)}
+                  placeholder="Untitled"
+                />
+              ) : (
+                <h1 className="doc-title-display">{title || 'Untitled'}</h1>
+              )}
+
+              {/* Tags */}
+              <div className="doc-tags-container">
+                <Tag size={14} className="doc-tags-icon" />
+                <input
+                  className="doc-tags-input"
+                  value={tagsInput}
+                  onChange={e => setTagsInput(e.target.value)}
+                  placeholder="Add tags separated by commas..."
+                />
+              </div>
+
+              {/* Editor Content */}
+              <EditorContent editor={editor} />
+            </div>
+          </div>
+
+          {/* ---- Table of Contents Sidebar ---- */}
+          <div className="editor-toc-sidebar">
+            <div className="toc-title">Outline</div>
+            {headings.length === 0 ? (
+              <div className="toc-empty">No headings yet. Use H1, H2, or H3 to structure your note.</div>
+            ) : (
+              <div className="toc-list">
+                {headings.map(h => (
+                  <button
+                    key={h.id}
+                    className={`toc-item level-${h.level}`}
+                    onClick={() => scrollToHeading(h.pos)}
+                    title={h.text}
+                  >
+                    {h.text}
+                  </button>
+                ))}
               </div>
             )}
-
-            {/* Title */}
-            {isEditing ? (
-              <input
-                className="doc-title-input"
-                value={title}
-                onChange={e => setTitle(e.target.value)}
-                placeholder="Untitled"
-              />
-            ) : (
-              <h1 className="doc-title-display">{title || 'Untitled'}</h1>
-            )}
-
-            {/* Tags */}
-            {isEditing ? (
-              <input
-                className="doc-tags-input"
-                value={tagsInput}
-                onChange={e => setTagsInput(e.target.value)}
-                placeholder="Tags (comma separated): e.g. urgent, research, draft"
-              />
-            ) : (
-              parsedTagsForDisplay.length > 0 && (
-                <div className="doc-tags-row">
-                  {parsedTagsForDisplay.map((tag, i) => (
-                    <span key={i} className="tag-badge">{tag}</span>
-                  ))}
-                </div>
-              )
-            )}
-
-            {/* Editor Content */}
-            <EditorContent editor={editor} />
           </div>
         </div>
 

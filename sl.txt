@@ -1,0 +1,508 @@
+# Sleekly Card UX & Whiteboard Collision Improvements Record
+
+This file documents the full implementation of the Phase 1 card readability, outline navigation, zoom/pan controls, and resize collision prevention. Use this guide to easily migrate these features to the **3-Tier modular monolith** and **Microservices** versions of Sleekly.
+
+---
+
+## 🛠️ Summary of Implemented Features
+
+1. **Widescreen Modal Canvas**: Modal width expanded to `1240px` (with `880px` text column) for a premium document editing feel.
+2. **Centered Viewport & Sticky Controls**: Centered the expanded modal vertically. The modal height is fixed to `calc(100vh - 48px)`, confining scrolling to the document text itself. The header, toolbar, and outline stay docked in place.
+3. **Always-Editable click experience**: Card opens immediately in edit mode. Removed the "Edit / Done" toggle. Tags input is borderless with a tag icon.
+4. **Dynamic Outline (Table of Contents)**: Reads `h1`, `h2`, `h3` nodes from TipTap in real-time, displaying them in a sticky right sidebar. Clicking an outline item moves the text selection to the heading, focuses the editor, and scrolls smoothly to it.
+5. **Expanded Image Zoom & Pan**: Adds floating controls (`+`, `-`, `Reset`) to zoom images up to 4x. Panning is supported via click-and-drag. Double-clicking toggles 1x/2x zoom.
+6. **Canvas Resizing Overlap Prevention**: Restricts card resizing in real-time. If expanding causes a collision, it halts expansion in the blocked direction while allowing it in free directions.
+
+---
+
+## 📂 1. CSS Modifications (`globals.css`)
+
+Apply these styling blocks to `src/app/globals.css` in the other codebases:
+
+```css
+/* ===== MODAL CENTERING & BOUNDS ===== */
+.modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(12px);
+  z-index: 5000;
+  display: flex;
+  align-items: center; /* Centers modal vertically */
+  justify-content: center;
+  overflow: hidden; /* Blocks outer browser scrollbar */
+  padding: 24px 16px;
+  animation: fadeIn 0.2s ease;
+}
+
+.editor-modal {
+  background: var(--bg-secondary);
+  width: 100%;
+  max-width: 1240px; /* Wider modal */
+  height: calc(100vh - 48px); /* Fits exactly inside overlay padding */
+  max-height: 900px;
+  border-radius: 18px;
+  border: 1px solid var(--border-light);
+  display: flex; flex-direction: column;
+  box-shadow:
+    0 24px 80px rgba(0,0,0,0.45),
+    0 8px 28px rgba(0,0,0,0.25),
+    0 0 0 1px rgba(255,255,255,0.04);
+  animation: modalSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+}
+
+/* ---- Reader / Editor Columns ---- */
+.editor-modal-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  position: relative;
+}
+
+.editor-readable-column {
+  max-width: 880px; /* Wider text canvas */
+  width: 100%;
+  margin: 0 auto;
+  padding: 8px 32px 48px;
+}
+
+/* ===== TABLE OF CONTENTS (OUTLINE) SIDEBAR ===== */
+.editor-toc-sidebar {
+  width: 220px;
+  border-left: 1px solid var(--border);
+  background: var(--bg-secondary);
+  padding: 24px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.toc-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.toc-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  font-style: italic;
+}
+
+.toc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.toc-item {
+  background: none;
+  border: none;
+  text-align: left;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 6px;
+  transition: all 0.15s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.toc-item:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.toc-item.level-1 { font-weight: 600; padding-left: 8px; }
+.toc-item.level-2 { padding-left: 18px; font-size: 12.5px; }
+.toc-item.level-3 { padding-left: 28px; font-size: 12px; color: var(--text-muted); }
+
+@media (max-width: 1024px) {
+  .editor-toc-sidebar {
+    display: none; /* Collapse sidebar responsively on smaller viewports */
+  }
+}
+
+/* ===== POLISHED INLINE TAGS ROW ===== */
+.doc-tags-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  margin-bottom: 24px;
+  padding: 4px 0;
+  border-bottom: 1px solid transparent;
+  transition: all 0.15s;
+}
+.doc-tags-container:focus-within {
+  border-bottom: 1px solid var(--border-light);
+}
+.doc-tags-icon {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+.doc-tags-input {
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-family: inherit;
+  caret-color: var(--accent);
+}
+.doc-tags-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.8;
+}
+
+/* ===== IMAGE PREVIEW ZOOM CONTROLS ===== */
+.image-zoom-controls {
+  position: absolute;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(20, 20, 20, 0.75);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 6px 16px;
+  border-radius: 30px;
+  z-index: 100002;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  color: #fff;
+}
+
+.zoom-control-btn {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.zoom-control-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
+.zoom-control-btn:active {
+  transform: scale(0.92);
+}
+
+.zoom-percentage {
+  font-size: 13px;
+  font-weight: 600;
+  min-width: 48px;
+  text-align: center;
+  user-select: none;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.zoom-control-divider {
+  width: 1px;
+  height: 16px;
+  background: rgba(255, 255, 255, 0.2);
+  margin: 0 4px;
+}
+```
+
+---
+
+## 📄 2. Card Editor Modifications (`RichTextEditor.tsx`)
+
+Implement these hooks, imports, and UI layout changes inside `RichTextEditor.tsx`:
+
+### Step 1: Icon Imports
+Import `Tag`, `ZoomIn`, `ZoomOut`, and `Maximize2` from `lucide-react`.
+
+### Step 2: Component State & Outline Logic
+Add these states and callbacks inside `RichTextEditor`:
+
+```typescript
+  // Set always editable by default
+  const [isEditing, setIsEditing] = useState(true);
+  const [headings, setHeadings] = useState<{ id: string; text: string; level: number; pos: number }[]>([]);
+
+  // Image Zoom & Pan States
+  const [zoomScale, setZoomScale] = useState(1);
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStart = useRef({ x: 0, y: 0 });
+
+  // Update Outline on TipTap updates
+  useEffect(() => {
+    if (!editor) return;
+
+    const updateHeadings = () => {
+      const list: typeof headings = [];
+      editor.state.doc.descendants((node: any, pos: number) => {
+        if (node.type.name === 'heading') {
+          list.push({
+            id: `heading-${pos}`,
+            text: node.textContent || 'Untitled Section',
+            level: node.attrs.level,
+            pos,
+          });
+        }
+      });
+      setHeadings(list);
+    };
+
+    updateHeadings();
+
+    editor.on('update', updateHeadings);
+    return () => {
+      editor.off('update', updateHeadings);
+    };
+  }, [editor]);
+
+  // Navigate to Heading - selection-focus fix to prevent scroll-jumps
+  const scrollToHeading = useCallback((pos: number) => {
+    if (!editor) return;
+    editor.commands.setTextSelection(pos);
+    editor.commands.focus();
+    const domNode = editor.view.nodeDOM(pos);
+    if (domNode instanceof HTMLElement) {
+      domNode.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [editor]);
+
+  // Drag-to-Pan Handlers
+  const handleImageMouseDown = useCallback((e: React.MouseEvent) => {
+    if (zoomScale <= 1) return;
+    e.preventDefault();
+    setIsDragging(true);
+    dragStart.current = { x: e.clientX - panOffset.x, y: e.clientY - panOffset.y };
+  }, [zoomScale, panOffset]);
+
+  const handleImageMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!isDragging) return;
+    const nextX = e.clientX - dragStart.current.x;
+    const nextY = e.clientY - dragStart.current.y;
+    setPanOffset({ x: nextX, y: nextY });
+  }, [isDragging]);
+
+  const handleImageMouseUp = useCallback(() => {
+    setIsDragging(false);
+  }, []);
+
+  const handleZoomIn = useCallback(() => {
+    setZoomScale(prev => Math.min(prev + 0.25, 4));
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    setZoomScale(prev => {
+      const next = Math.max(prev - 0.25, 1);
+      if (next === 1) {
+        setPanOffset({ x: 0, y: 0 });
+      }
+      return next;
+    });
+  }, []);
+
+  const handleZoomReset = useCallback(() => {
+    setZoomScale(1);
+    setPanOffset({ x: 0, y: 0 });
+  }, []);
+
+  const handleImageDoubleClick = useCallback(() => {
+    if (zoomScale > 1) {
+      handleZoomReset();
+    } else {
+      setZoomScale(2);
+    }
+  }, [zoomScale, handleZoomReset]);
+```
+
+### Step 3: Remove Edit Button from Header
+Delete `<button className="editor-edit-toggle-btn">...</button>` from the header JSX block.
+
+### Step 4: Split Body and Table of Contents Markup
+Wrap the body content in `.editor-modal-body` and append the `.editor-toc-sidebar` panel:
+
+```typescript
+        {/* ---- Page Body ---- */}
+        <div className="editor-modal-body">
+          <div className="editor-content" style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
+            <div className="editor-readable-column">
+              
+              {/* Card Title (Always input) */}
+              <input
+                className="doc-title-input"
+                value={title}
+                onChange={e => setTitle(e.target.value)}
+                placeholder="Untitled"
+              />
+
+              {/* Polished Inline Tags Row */}
+              <div className="doc-tags-container">
+                <Tag size={14} className="doc-tags-icon" />
+                <input
+                  className="doc-tags-input"
+                  value={tagsInput}
+                  onChange={e => setTagsInput(e.target.value)}
+                  placeholder="Add tags separated by commas..."
+                />
+              </div>
+
+              {/* Editor Content */}
+              <EditorContent editor={editor} />
+            </div>
+          </div>
+
+          {/* ---- Table of Contents Sidebar ---- */}
+          <div className="editor-toc-sidebar">
+            <div className="toc-title">Outline</div>
+            {headings.length === 0 ? (
+              <div className="toc-empty">No headings yet. Use H1, H2, or H3 to structure your note.</div>
+            ) : (
+              <div className="toc-list">
+                {headings.map(h => (
+                  <button
+                    key={h.id}
+                    className={`toc-item level-${h.level}`}
+                    onClick={() => scrollToHeading(h.pos)}
+                    title={h.text}
+                  >
+                    {h.text}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+```
+
+### Step 5: Zoomable Image Preview Overlay
+Update the image preview JSX block:
+
+```typescript
+  if (mode === 'preview' && (card.type === 'image' || card.type === 'pdf') && url) {
+    return (
+      <div className="modal-overlay" style={{ background: 'rgba(0,0,0,0.9)', zIndex: 100000 }} onClick={handleClose}>
+        <button 
+          onClick={handleClose}
+          style={{ position: 'absolute', top: 20, right: 24, background: 'rgba(255,255,255,0.1)', color: '#fff', border: 'none', borderRadius: '50%', width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', zIndex: 100001 }}
+        >
+          <X size={24} />
+        </button>
+        <div style={{ width: '90vw', height: '90vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={e => e.stopPropagation()}>
+          {card.type === 'pdf' ? (
+            <iframe src={`${resolveMediaUrl(url)}#view=FitH&pagemode=thumbs`} style={{ width: '100%', height: '100%', border: 'none', borderRadius: 8, background: '#fff' }} title={title} />
+          ) : (
+            <div 
+              style={{
+                position: 'relative',
+                width: '100%',
+                height: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                overflow: 'hidden',
+                cursor: zoomScale > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default'
+              }}
+              onMouseDown={handleImageMouseDown}
+              onMouseMove={handleImageMouseMove}
+              onMouseUp={handleImageMouseUp}
+              onMouseLeave={handleImageMouseUp}
+            >
+              <img
+                src={resolveMediaUrl(url)}
+                alt={title}
+                onDoubleClick={handleImageDoubleClick}
+                style={{
+                  transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoomScale})`,
+                  transition: isDragging ? 'none' : 'transform 0.15s ease-out',
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                  objectFit: 'contain',
+                  borderRadius: 8,
+                  userSelect: 'none',
+                  pointerEvents: 'none'
+                }}
+                draggable={false}
+              />
+              
+              {/* Floating controls bar */}
+              <div className="image-zoom-controls" onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}>
+                <button type="button" className="zoom-control-btn" onClick={handleZoomOut} title="Zoom Out"><ZoomOut size={16} /></button>
+                <span className="zoom-percentage">{Math.round(zoomScale * 100)}%</span>
+                <button type="button" className="zoom-control-btn" onClick={handleZoomIn} title="Zoom In"><ZoomIn size={16} /></button>
+                {zoomScale !== 1 && (
+                  <>
+                    <div className="zoom-control-divider" />
+                    <button type="button" className="zoom-control-btn" onClick={handleZoomReset} title="Fit to Screen"><Maximize2 size={15} /></button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+```
+
+---
+
+## 🎨 3. Canvas Resizing Overlap Prevention (`InfiniteCanvas.tsx`)
+
+Apply these updates in `src/components/Canvas/InfiniteCanvas.tsx` to stop resized cards from overlapping:
+
+### Step 1: Import Collision Helper
+Import `hasOverlap` from your collision file alongside `findNonOverlappingPosition`:
+```typescript
+import { findNonOverlappingPosition, hasOverlap } from '@/lib/collision';
+```
+
+### Step 2: Refactor `handleResize`
+Update `handleResize` to query overlap before calling updates:
+
+```typescript
+  const handleResize = useCallback(
+    (id: string, width: number, height: number) => {
+      if (readOnly) return;
+      const card = cards.find(c => c.id === id);
+      if (!card) return;
+
+      const proposedRect = { x: card.x, y: card.y, width, height };
+
+      // If proposed dimensions don't overlap, apply size
+      if (!hasOverlap(proposedRect, cards, id)) {
+        onUpdateCard({ id, width, height });
+      } else {
+        // Evaluate horizontal and vertical resizing independently
+        const widthOk = !hasOverlap({ x: card.x, y: card.y, width, height: card.height }, cards, id);
+        const heightOk = !hasOverlap({ x: card.x, y: card.y, width: card.width, height }, cards, id);
+
+        const finalW = widthOk ? width : card.width;
+        const finalH = heightOk ? height : card.height;
+
+        if (finalW !== card.width || finalH !== card.height) {
+          onUpdateCard({ id, width: finalW, height: finalH });
+        }
+      }
+    },
+    [onUpdateCard, readOnly, cards]
+  );
+```
