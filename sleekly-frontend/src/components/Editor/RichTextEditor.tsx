@@ -35,7 +35,8 @@ import {
   Quote, Code, AlignLeft, AlignCenter, AlignRight,
   Highlighter, X, Undo, Redo,
   BookOpen, Minimize2, Table as TableIcon, Mic,
-  Pencil, Check, Tag, ZoomIn, ZoomOut, Maximize2
+  Pencil, Check, Tag, ZoomIn, ZoomOut, Maximize2,
+  Type
 } from 'lucide-react';
 
 /** Heuristic: does this clipboard text look like markdown? */
@@ -158,6 +159,34 @@ const ResizableImage = TiptapImage.extend({
   },
 });
 
+interface StyleMetadata {
+  font: 'sans' | 'serif' | 'mono';
+  size: 'small' | 'normal' | 'large';
+  spacing: 'tight' | 'normal' | 'relaxed';
+}
+
+function parseStyleMetadata(content: string) {
+  const match = content.match(/<!-- sleekly-style: (\{.*?\}) -->/);
+  let font: 'sans' | 'serif' | 'mono' = 'sans';
+  let size: 'small' | 'normal' | 'large' = 'normal';
+  let spacing: 'tight' | 'normal' | 'relaxed' = 'normal';
+  let cleanHtml = content;
+
+  if (match) {
+    try {
+      const meta: Partial<StyleMetadata> = JSON.parse(match[1]);
+      if (meta.font === 'sans' || meta.font === 'serif' || meta.font === 'mono') font = meta.font;
+      if (meta.size === 'small' || meta.size === 'normal' || meta.size === 'large') size = meta.size;
+      if (meta.spacing === 'tight' || meta.spacing === 'normal' || meta.spacing === 'relaxed') spacing = meta.spacing;
+      cleanHtml = content.replace(match[0], '');
+    } catch (e) {
+      console.error('Failed to parse style metadata', e);
+    }
+  }
+
+  return { font, size, spacing, cleanHtml };
+}
+
 function cleanContent(content: string): string {
   if (!content) return '';
   let cleaned = content;
@@ -206,8 +235,91 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
   const [zoomScale, setZoomScale] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
+  const [animateTransition, setAnimateTransition] = useState(false);
   const dragStart = useRef({ x: 0, y: 0 });
   const overlayRef = useRef<HTMLDivElement>(null);
+
+  // Parse card level typography settings from HTML metadata
+  const styleMeta = useRef(parseStyleMetadata(card.content || ''));
+  const [fontFamily, setFontFamily] = useState<'sans' | 'serif' | 'mono'>(styleMeta.current.font);
+  const [fontSize, setFontSize] = useState<'small' | 'normal' | 'large'>(styleMeta.current.size);
+  const [lineSpacing, setLineSpacing] = useState<'tight' | 'normal' | 'relaxed'>(styleMeta.current.spacing);
+  const [showStyleMenu, setShowStyleMenu] = useState(false);
+
+  const zoomScaleRef = useRef(zoomScale);
+  useEffect(() => {
+    zoomScaleRef.current = zoomScale;
+  }, [zoomScale]);
+
+  const cleanupRef = useRef<(() => void) | null>(null);
+
+  const previewContainerRef = useCallback((node: HTMLDivElement | null) => {
+    if (cleanupRef.current) {
+      cleanupRef.current();
+      cleanupRef.current = null;
+    }
+
+    if (node) {
+      let gestureStartScale = 1;
+
+      const onGestureStart = (e: any) => {
+        e.preventDefault();
+        gestureStartScale = zoomScaleRef.current;
+      };
+
+      const onGestureChange = (e: any) => {
+        e.preventDefault();
+        const nextScale = Math.max(1, Math.min(gestureStartScale * e.scale, 4));
+        setZoomScale(nextScale);
+        if (nextScale === 1) {
+          setPanOffset({ x: 0, y: 0 });
+        }
+      };
+
+      const onGestureEnd = (e: any) => {
+        e.preventDefault();
+      };
+
+      const onWheel = (e: WheelEvent) => {
+        e.preventDefault();
+
+        const isZoomKey = e.ctrlKey || e.metaKey;
+
+        if (isZoomKey) {
+          // Pinch-to-zoom / Ctrl+Wheel / Cmd+Wheel
+          const isZoomIn = e.deltaY < 0;
+          const zoomStep = 0.08;
+          setZoomScale(prev => {
+            const next = Math.max(1, Math.min(prev + (isZoomIn ? zoomStep : -zoomStep), 4));
+            if (next === 1) {
+              setPanOffset({ x: 0, y: 0 });
+            }
+            return next;
+          });
+        } else {
+          // Trackpad 2-finger panning / mouse wheel scroll panning (only when zoomed in)
+          if (zoomScaleRef.current > 1) {
+            setPanOffset(prev => ({
+              x: prev.x - e.deltaX * 1.0,
+              y: prev.y - e.deltaY * 1.0
+            }));
+          }
+        }
+      };
+
+      node.addEventListener('gesturestart', onGestureStart, { passive: false });
+      node.addEventListener('gesturechange', onGestureChange, { passive: false });
+      node.addEventListener('gestureend', onGestureEnd, { passive: false });
+      node.addEventListener('wheel', onWheel, { passive: false });
+
+      cleanupRef.current = () => {
+        node.removeEventListener('gesturestart', onGestureStart);
+        node.removeEventListener('gesturechange', onGestureChange);
+        node.removeEventListener('gestureend', onGestureEnd);
+        node.removeEventListener('wheel', onWheel);
+      };
+    }
+  }, []);
 
 
   const editor = useEditor({
@@ -232,7 +344,7 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
       TaskItem.configure({ nested: true }),
       VoiceNote,
     ],
-    content: cleanContent(card.content || ''),
+    content: cleanContent(styleMeta.current.cleanHtml),
     immediatelyRender: false,
     onUpdate: () => {
       setContentUpdated(Date.now());
@@ -326,19 +438,7 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
     setIsDragging(false);
   }, []);
 
-  const handleZoomIn = useCallback(() => {
-    setZoomScale(prev => Math.min(prev + 0.25, 4));
-  }, []);
 
-  const handleZoomOut = useCallback(() => {
-    setZoomScale(prev => {
-      const next = Math.max(prev - 0.25, 1);
-      if (next === 1) {
-        setPanOffset({ x: 0, y: 0 });
-      }
-      return next;
-    });
-  }, []);
 
   const handleZoomReset = useCallback(() => {
     setZoomScale(1);
@@ -346,11 +446,15 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
   }, []);
 
   const handleImageDoubleClick = useCallback(() => {
+    setAnimateTransition(true);
     if (zoomScale > 1) {
       handleZoomReset();
     } else {
       setZoomScale(2);
     }
+    setTimeout(() => {
+      setAnimateTransition(false);
+    }, 150);
   }, [zoomScale, handleZoomReset]);
 
   // Dynamically update handlePaste and handleDrop to prevent stale closure bugs in useEditor
@@ -462,24 +566,27 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
     const regex = new RegExp(`src="${apiBase.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}/api/media/files/`, 'g');
     newContent = newContent.replace(regex, 'src="/api/media/files/');
     
+    // Append card-level typography styling metadata
+    const finalContent = newContent + `<!-- sleekly-style: ${JSON.stringify({ font: fontFamily, size: fontSize, spacing: lineSpacing })} -->`;
+
     const hasChanges = 
       title !== card.title ||
       color !== card.color ||
       url !== (card.url || '') ||
       tagsInput !== (card.tags || []).join(', ') ||
-      newContent !== (card.content || '');
+      finalContent !== (card.content || '');
 
     if (hasChanges) {
       onSave({
         id: card.id,
         title,
-        content: newContent,
+        content: finalContent,
         color,
         url,
         tags: parsedTags,
       });
     }
-  }, [card, title, color, url, tagsInput, editor, onSave]);
+  }, [card, title, color, url, tagsInput, editor, fontFamily, fontSize, lineSpacing, onSave]);
 
   const toggleEditMode = useCallback(() => {
     if (isEditing) {
@@ -499,7 +606,7 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
       autoSave();
     }, 1000);
     return () => clearTimeout(timer);
-  }, [title, color, url, tagsInput, contentUpdated, autoSave]);
+  }, [title, color, url, tagsInput, contentUpdated, fontFamily, fontSize, lineSpacing, autoSave]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -574,6 +681,7 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
             <iframe src={`${resolveMediaUrl(url)}#view=FitH&pagemode=thumbs`} style={{ width: '100%', height: '100%', border: 'none', borderRadius: 8, background: '#fff' }} title={title} />
           ) : (
             <div 
+              ref={previewContainerRef}
               style={{
                 position: 'relative',
                 width: '100%',
@@ -595,7 +703,7 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
                 onDoubleClick={handleImageDoubleClick}
                 style={{
                   transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoomScale})`,
-                  transition: isDragging ? 'none' : 'transform 0.15s ease-out',
+                  transition: animateTransition ? 'transform 0.15s ease-out' : 'none',
                   maxWidth: '100%',
                   maxHeight: '100%',
                   objectFit: 'contain',
@@ -605,44 +713,7 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
                 }}
                 draggable={false}
               />
-              
-              <div className="image-zoom-controls" onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}>
-                <button
-                  type="button"
-                  className="zoom-control-btn"
-                  onClick={handleZoomOut}
-                  title="Zoom Out"
-                >
-                  <ZoomOut size={16} />
-                </button>
-                
-                <span className="zoom-percentage">
-                  {Math.round(zoomScale * 100)}%
-                </span>
-                
-                <button
-                  type="button"
-                  className="zoom-control-btn"
-                  onClick={handleZoomIn}
-                  title="Zoom In"
-                >
-                  <ZoomIn size={16} />
-                </button>
-                
-                {zoomScale !== 1 && (
-                  <>
-                    <div className="zoom-control-divider" />
-                    <button
-                      type="button"
-                      className="zoom-control-btn"
-                      onClick={handleZoomReset}
-                      title="Fit to Screen"
-                    >
-                      <Maximize2 size={15} />
-                    </button>
-                  </>
-                )}
-              </div>
+
             </div>
           )}
         </div>
@@ -786,6 +857,117 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
             <button className={`editor-toolbar-btn${editor.isActive({ textAlign: 'left' }) ? ' active' : ''}`} onClick={() => editor.chain().focus().setTextAlign('left').run()}><AlignLeft size={15} /></button>
             <button className={`editor-toolbar-btn${editor.isActive({ textAlign: 'center' }) ? ' active' : ''}`} onClick={() => editor.chain().focus().setTextAlign('center').run()}><AlignCenter size={15} /></button>
             <button className={`editor-toolbar-btn${editor.isActive({ textAlign: 'right' }) ? ' active' : ''}`} onClick={() => editor.chain().focus().setTextAlign('right').run()}><AlignRight size={15} /></button>
+            
+            {/* Style settings dropdown */}
+            <div className="editor-toolbar-divider" />
+            <div style={{ position: 'relative' }}>
+              <button
+                type="button"
+                className={`editor-toolbar-btn${showStyleMenu ? ' active' : ''}`}
+                onClick={() => setShowStyleMenu(prev => !prev)}
+                title="Typography settings"
+              >
+                <Type size={15} />
+              </button>
+
+              {showStyleMenu && (
+                <>
+                  {/* Overlay to close menu */}
+                  <div 
+                    style={{ position: 'fixed', inset: 0, zIndex: 999 }} 
+                    onClick={() => setShowStyleMenu(false)} 
+                  />
+                  <div className="typography-dropdown-menu">
+                    {/* Font Family Section */}
+                    <div className="dropdown-section">
+                      <div className="dropdown-section-title">Font</div>
+                      <div className="dropdown-options-row">
+                        <button
+                          type="button"
+                          className={`dropdown-option-btn${fontFamily === 'sans' ? ' active' : ''}`}
+                          onClick={() => { setFontFamily('sans'); setShowStyleMenu(false); }}
+                        >
+                          Sans
+                        </button>
+                        <button
+                          type="button"
+                          className={`dropdown-option-btn${fontFamily === 'serif' ? ' active' : ''}`}
+                          onClick={() => { setFontFamily('serif'); setShowStyleMenu(false); }}
+                          style={{ fontFamily: 'Georgia, serif' }}
+                        >
+                          Serif
+                        </button>
+                        <button
+                          type="button"
+                          className={`dropdown-option-btn${fontFamily === 'mono' ? ' active' : ''}`}
+                          onClick={() => { setFontFamily('mono'); setShowStyleMenu(false); }}
+                          style={{ fontFamily: 'monospace' }}
+                        >
+                          Mono
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Font Size Section */}
+                    <div className="dropdown-section">
+                      <div className="dropdown-section-title">Size</div>
+                      <div className="dropdown-options-row">
+                        <button
+                          type="button"
+                          className={`dropdown-option-btn${fontSize === 'small' ? ' active' : ''}`}
+                          onClick={() => { setFontSize('small'); setShowStyleMenu(false); }}
+                        >
+                          Small
+                        </button>
+                        <button
+                          type="button"
+                          className={`dropdown-option-btn${fontSize === 'normal' ? ' active' : ''}`}
+                          onClick={() => { setFontSize('normal'); setShowStyleMenu(false); }}
+                        >
+                          Normal
+                        </button>
+                        <button
+                          type="button"
+                          className={`dropdown-option-btn${fontSize === 'large' ? ' active' : ''}`}
+                          onClick={() => { setFontSize('large'); setShowStyleMenu(false); }}
+                        >
+                          Large
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Line Spacing Section */}
+                    <div className="dropdown-section">
+                      <div className="dropdown-section-title">Spacing</div>
+                      <div className="dropdown-options-row">
+                        <button
+                          type="button"
+                          className={`dropdown-option-btn${lineSpacing === 'tight' ? ' active' : ''}`}
+                          onClick={() => { setLineSpacing('tight'); setShowStyleMenu(false); }}
+                        >
+                          Tight
+                        </button>
+                        <button
+                          type="button"
+                          className={`dropdown-option-btn${lineSpacing === 'normal' ? ' active' : ''}`}
+                          onClick={() => { setLineSpacing('normal'); setShowStyleMenu(false); }}
+                        >
+                          Normal
+                        </button>
+                        <button
+                          type="button"
+                          className={`dropdown-option-btn${lineSpacing === 'relaxed' ? ' active' : ''}`}
+                          onClick={() => { setLineSpacing('relaxed'); setShowStyleMenu(false); }}
+                        >
+                          Relaxed
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
             <div className="editor-toolbar-divider" />
             <button className="editor-toolbar-btn" onClick={() => editor.chain().focus().undo().run()}><Undo size={15} /></button>
             <button className="editor-toolbar-btn" onClick={() => editor.chain().focus().redo().run()}><Redo size={15} /></button>
@@ -794,7 +976,7 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
 
         {/* ---- Page Body ---- */}
         <div className="editor-modal-body">
-          <div className="editor-content" style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
+          <div className={`editor-content font-${fontFamily} size-${fontSize} spacing-${lineSpacing}`} style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
             <div className="editor-readable-column">
               {/* URL row for non-richtext cards */}
               {card.type !== 'richtext' && isEditing && (
