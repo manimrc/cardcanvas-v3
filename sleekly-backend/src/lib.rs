@@ -6,7 +6,7 @@ pub mod domain;
 pub mod infrastructure;
 
 use axum::{Router, http::Method};
-use tower_http::cors::{CorsLayer, Any};
+use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use std::net::SocketAddr;
 use state::AppState;

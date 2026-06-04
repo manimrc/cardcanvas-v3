@@ -190,7 +190,7 @@ export default function Home() {
         height: h,
         is_locked: false,
         ...d,
-      } as any);
+      } as Parameters<typeof api.cards.create>[0]);
       setCards(prev => [...prev, card]);
       setAllCards(prev => [...prev, card]);
       return card;
@@ -408,7 +408,7 @@ export default function Home() {
             color: card.color,
             url: card.url,
             tags: card.tags,
-          } as any);
+          } as Parameters<typeof api.cards.create>[0]);
           setCards(prev => [...prev, newCard]);
           setAllCards(prev => [...prev, newCard]);
           setSelectedCardId(newCard.id);
@@ -421,7 +421,7 @@ export default function Home() {
             board_id: activeBoardId,
             x,
             y,
-          } as any);
+          } as Parameters<typeof api.cards.update>[1]);
 
           if (card.boardId === activeBoardId) {
             setCards(prev => prev.map(c => (c.id === card.id ? { ...c, x, y } : c)));

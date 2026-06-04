@@ -1163,7 +1163,7 @@ body {
   max-width: 880px;
   width: 100%;
   margin: 0 auto;
-  padding: 8px 32px 48px;
+  padding: 8px 32px 280px; /* Large bottom padding for scroll-past-end */
 }
 
 /* Table of Contents (Outline) Sidebar */

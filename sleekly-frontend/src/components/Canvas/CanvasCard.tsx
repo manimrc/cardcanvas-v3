@@ -18,7 +18,6 @@ interface Props {
   onResize: (id: string, w: number, h: number) => void;
   onContextMenu: (e: React.MouseEvent) => void;
   onColorChange: (id: string, color: string) => void;
-  onUpdateCard?: (update: Partial<CardType>) => void;
   readOnly?: boolean;
   boardLabel?: string;
   /** Fill a CSS grid cell (tags mode); ignores canvas x/y/width/height */
@@ -123,7 +122,7 @@ function cleanContent(content: string): string {
   
   // Resolve relative media paths in Tauri for previews
   const isTauri = typeof window !== 'undefined' && 
-    (window.location.protocol === 'tauri:' || (window as any).__TAURI_INTERNALS__ !== undefined);
+    (window.location.protocol === 'tauri:' || (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !== undefined);
   if (isTauri) {
     const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
     cleaned = cleaned.replace(/src="\/api\/media\/files\//g, `src="${apiBase}/api/media/files/`);
@@ -152,7 +151,6 @@ export default function CanvasCard({
   onResize,
   onContextMenu,
   onColorChange,
-  onUpdateCard,
   readOnly = false,
   boardLabel,
   uniformGrid = false,

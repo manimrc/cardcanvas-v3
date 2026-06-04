@@ -5,9 +5,7 @@ use axum::{
 };
 use axum::http::{header, HeaderValue};
 use axum::response::IntoResponse;
-use std::sync::Arc;
-
-use super::{models::*, service::AuthService};
+use super::models::*;
 use crate::{
     infrastructure::{auth::AuthUser, validation::ValidatedJson},
     errors::{AppError, Result},

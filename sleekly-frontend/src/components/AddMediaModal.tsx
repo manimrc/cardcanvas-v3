@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Upload, Clipboard, Link2 } from 'lucide-react';
-import { api } from '@/lib/api';
+import { api, resolveMediaUrl } from '@/lib/api';
 import { useAuth } from '@/components/AuthContext';
 import { inferMediaType } from '@/lib/mediaType';
 
@@ -132,7 +132,7 @@ export default function AddMediaModal({ open, onClose, onConfirm }: Props) {
               </div>
             </div>
           ) : preview && kind === 'image' ? (
-            <img src={preview} alt="" className="add-media-preview-img" />
+            <img src={resolveMediaUrl(preview)} alt="" className="add-media-preview-img" />
           ) : preview && kind === 'pdf' ? (
             <div className="add-media-preview-pdf">
               <span className="add-media-preview-pdf-icon">📄</span>

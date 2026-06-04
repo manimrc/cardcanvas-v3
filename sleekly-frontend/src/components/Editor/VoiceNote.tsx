@@ -3,7 +3,7 @@
 import { Node, mergeAttributes } from '@tiptap/core';
 import { ReactNodeViewRenderer, NodeViewWrapper, type NodeViewProps } from '@tiptap/react';
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, Mic, Square, Trash2, FolderOpen, Upload } from 'lucide-react';
+import { Play, Pause, Mic, Square, Trash2, FolderOpen } from 'lucide-react';
 import { getDesktopService } from '@/lib/desktop/desktopAdapter';
 import { resolveMediaUrl } from '@/lib/api';
 

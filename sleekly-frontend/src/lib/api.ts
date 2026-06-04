@@ -127,7 +127,7 @@ export const api = {
         body: JSON.stringify(card),
       }),
 
-    update: (id: string, data: Partial<import('@/types').Card>) =>
+    update: (id: string, data: Partial<import('@/types').Card> & { board_id?: string; is_locked?: boolean }) =>
       request<import('@/types').Card>(`/api/cards/${id}`, {
         method: 'PUT',
         body: JSON.stringify(data),
@@ -178,7 +178,7 @@ export const api = {
             try {
               const res = JSON.parse(xhr.responseText);
               resolve(res);
-            } catch (err) {
+            } catch {
               reject(new Error('Invalid response JSON'));
             }
           } else {
@@ -186,7 +186,9 @@ export const api = {
             try {
               const err = JSON.parse(xhr.responseText);
               errorMsg = err.error || errorMsg;
-            } catch (_) {}
+            } catch {
+              // Ignore parse error, use default errorMsg
+            }
             reject(new Error(errorMsg));
           }
         };
@@ -233,7 +235,7 @@ export function resolveMediaUrl(url: string | null | undefined): string {
     return url;
   }
   const isTauri = typeof window !== 'undefined' && 
-    (window.location.protocol === 'tauri:' || (window as any).__TAURI_INTERNALS__ !== undefined);
+    (window.location.protocol === 'tauri:' || (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !== undefined);
   if (isTauri) {
     const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
     return `${apiBase}${url}`;

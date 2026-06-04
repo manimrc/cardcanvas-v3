@@ -30,7 +30,8 @@ class TauriDesktopService implements DesktopService {
 class WebDesktopService implements DesktopService {
   isTauri() { return false; }
   
-  async uploadMedia(file: File, _userId: string): Promise<string | null> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async uploadMedia(file: File, userId: string): Promise<string | null> {
     try {
       const res = await api.media.upload(file);
       return res.url;
@@ -47,7 +48,7 @@ class WebDesktopService implements DesktopService {
  */
 export const getDesktopService = (): DesktopService => {
   const isRunningInTauri = typeof window !== 'undefined' && 
-    (window.location.protocol === 'tauri:' || (window as any).__TAURI_INTERNALS__ !== undefined);
+    (window.location.protocol === 'tauri:' || (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !== undefined);
     
   return isRunningInTauri ? new TauriDesktopService() : new WebDesktopService();
 };

@@ -348,7 +348,6 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, Props>(function Infinite
               onResize={handleResize}
               onContextMenu={e => handleCardContextMenu(e, card.id)}
               onColorChange={handleColorChange}
-              onUpdateCard={onUpdateCard}
               readOnly={readOnly}
               boardLabel={boardNameMap?.[card.boardId]}
               scrollContainerRef={containerRef}

@@ -25,7 +25,7 @@ import { VoiceNote } from './VoiceNote';
 const lowlight = createLowlight(common);
 import { Card } from '@/types';
 import { CARD_COLORS } from '@/lib/constants';
-import { api, resolveMediaUrl } from '@/lib/api';
+import { resolveMediaUrl } from '@/lib/api';
 import { useAuth } from '@/components/AuthContext';
 import { getDesktopService } from '@/lib/desktop/desktopAdapter';
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -35,8 +35,7 @@ import {
   Quote, Code, AlignLeft, AlignCenter, AlignRight,
   Highlighter, X, Undo, Redo,
   BookOpen, Minimize2, Table as TableIcon, Mic,
-  Pencil, Check, Tag, ZoomIn, ZoomOut, Maximize2,
-  Type
+  Tag, Type
 } from 'lucide-react';
 
 /** Heuristic: does this clipboard text look like markdown? */
@@ -193,7 +192,7 @@ function cleanContent(content: string): string {
   
   // Resolve relative media paths in Tauri for the editor
   const isTauri = typeof window !== 'undefined' && 
-    (window.location.protocol === 'tauri:' || (window as any).__TAURI_INTERNALS__ !== undefined);
+    (window.location.protocol === 'tauri:' || (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !== undefined);
   if (isTauri) {
     const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
     cleaned = cleaned.replace(/src="\/api\/media\/files\//g, `src="${apiBase}/api/media/files/`);
@@ -224,13 +223,13 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
     }
   }, [user]);
 
-  const [title, setTitle] = useState(card.title);
+  const [title, setTitle] = useState(card.title || '');
   const [color, setColor] = useState(card.color);
   const [url, setUrl] = useState(card.url || '');
   const [tagsInput, setTagsInput] = useState((card.tags || []).join(', '));
   const [contentUpdated, setContentUpdated] = useState(0);
   const [focusMode, setFocusMode] = useState(false);
-  const [isEditing, setIsEditing] = useState(true);
+  const isEditing = true;
   const [headings, setHeadings] = useState<{ id: string; text: string; level: number; pos: number }[]>([]);
   const [zoomScale, setZoomScale] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
@@ -238,6 +237,7 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
   const [animateTransition, setAnimateTransition] = useState(false);
   const dragStart = useRef({ x: 0, y: 0 });
   const overlayRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Parse card level typography settings from HTML metadata
   const styleMeta = useRef(parseStyleMetadata(card.content || ''));
@@ -262,11 +262,13 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
     if (node) {
       let gestureStartScale = 1;
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const onGestureStart = (e: any) => {
         e.preventDefault();
         gestureStartScale = zoomScaleRef.current;
       };
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const onGestureChange = (e: any) => {
         e.preventDefault();
         const nextScale = Math.max(1, Math.min(gestureStartScale * e.scale, 4));
@@ -276,6 +278,7 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
         }
       };
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const onGestureEnd = (e: any) => {
         e.preventDefault();
       };
@@ -389,6 +392,7 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
 
     const updateHeadings = () => {
       const list: typeof headings = [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       editor.state.doc.descendants((node: any, pos: number) => {
         if (node.type.name === 'heading') {
           list.push({
@@ -412,11 +416,49 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
 
   const scrollToHeading = useCallback((pos: number) => {
     if (!editor) return;
-    editor.commands.setTextSelection(pos);
-    editor.commands.focus();
-    const domNode = editor.view.nodeDOM(pos);
-    if (domNode instanceof HTMLElement) {
-      domNode.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    try {
+      // Scroll only the specific editor content scroll container
+      const container = scrollContainerRef.current;
+      if (container) {
+        // 1. Try to get the DOM element representing the node at pos (e.g. the H1/H2/H3 tag)
+        let element = editor.view.nodeDOM(pos) as HTMLElement | null;
+
+        // 2. Fall back to domAtPos if nodeDOM returns null
+        if (!element) {
+          const { node, offset } = editor.view.domAtPos(pos);
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            const elem = node as HTMLElement;
+            if (offset < elem.childNodes.length) {
+              const child = elem.childNodes[offset];
+              element = child instanceof HTMLElement ? child : child.parentElement;
+            } else {
+              element = elem;
+            }
+          } else {
+            element = node.parentElement;
+          }
+        }
+
+        // 3. Traverse up to ensure we find the heading tag (H1, H2, H3)
+        while (element && !['H1', 'H2', 'H3'].includes(element.tagName) && element !== editor.view.dom) {
+          element = element.parentElement;
+        }
+
+        if (element && element !== editor.view.dom) {
+          const containerRect = container.getBoundingClientRect();
+          const elementRect = element.getBoundingClientRect();
+          const targetScrollTop = elementRect.top - containerRect.top + container.scrollTop;
+
+          // Scroll ONLY the specific container smoothly
+          container.scrollTo({
+            top: targetScrollTop - 8, // Leave an 8px top margin
+            behavior: 'smooth'
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Scroll outline failed', err);
     }
   }, [editor]);
 
@@ -588,13 +630,6 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
     }
   }, [card, title, color, url, tagsInput, editor, fontFamily, fontSize, lineSpacing, onSave]);
 
-  const toggleEditMode = useCallback(() => {
-    if (isEditing) {
-      // Leaving edit mode → auto-save
-      autoSave();
-    }
-    setIsEditing(prev => !prev);
-  }, [isEditing, autoSave]);
 
   const handleClose = useCallback(() => {
     autoSave();
@@ -785,11 +820,6 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
     );
   }
 
-  // Parse tags for display
-  const parsedTagsForDisplay = tagsInput
-    .split(',')
-    .map(t => t.trim())
-    .filter(Boolean);
 
   return (
     <div ref={overlayRef} className="modal-overlay" onClick={handleClose}>
@@ -976,7 +1006,11 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
 
         {/* ---- Page Body ---- */}
         <div className="editor-modal-body">
-          <div className={`editor-content font-${fontFamily} size-${fontSize} spacing-${lineSpacing}`} style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
+          <div 
+            ref={scrollContainerRef}
+            className={`editor-content font-${fontFamily} size-${fontSize} spacing-${lineSpacing}`} 
+            style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}
+          >
             <div className="editor-readable-column">
               {/* URL row for non-richtext cards */}
               {card.type !== 'richtext' && isEditing && (
@@ -1039,8 +1073,13 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
                 {headings.map(h => (
                   <button
                     key={h.id}
+                    type="button"
                     className={`toc-item level-${h.level}`}
-                    onClick={() => scrollToHeading(h.pos)}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      scrollToHeading(h.pos);
+                    }}
                     title={h.text}
                   >
                     {h.text}
