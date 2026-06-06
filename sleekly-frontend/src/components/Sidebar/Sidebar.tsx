@@ -55,7 +55,13 @@ export default function Sidebar(props: Props) {
   const [entryMoods, setEntryMoods] = useState<Record<string, string>>({});
   const currentYear = new Date().getFullYear();
 
-  // Load calendar dots + heatmap data when journal view is active
+  /**
+   * Calendar Range Hydration:
+   * 
+   * WHY: Instead of querying all database entries across history which degrades API response times
+   * as the user's journal grows, we parse the active calendar date viewport and queries a range limited to the
+   * current month (`monthStart` to `monthEnd`). This lets us draw mood color dots on the calendar grid efficiently.
+   */
   useEffect(() => {
     if (props.view !== 'journal' || !props.user) return;
     const journalDate = props.journalDate ?? new Date();
@@ -77,7 +83,13 @@ export default function Sidebar(props: Props) {
       .catch(err => console.error('Failed to load journal dates:', err));
   }, [props.view, props.user, props.journalDate]);
 
-  // Load heatmap data when toggled
+  /**
+   * Heatmap Data Hydration:
+   * 
+   * WHY: Emotional heatmaps map a user's moods across a 365-day layout. Querying this complete dataset is
+   * resource-heavy. We restrict fetching to only run when the user explicitly expands the heatmap view container
+   * (`heatmapVisible === true`), implementing an on-demand loading strategy.
+   */
   useEffect(() => {
     if (!heatmapVisible || props.view !== 'journal' || !props.user) return;
     api.journal.getHeatmap(currentYear)

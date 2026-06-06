@@ -1,12 +1,21 @@
+/**
+ * @file CanvasCard.tsx
+ * @description Card item rendering component for the infinite whiteboard workspace.
+ * Resolves different UI preview sub-components based on card type (RichText, Image, PDF, Link).
+ * Handles mouse interactions for drag-and-drop movement and boundary resizing on the coordinate plane.
+ */
+
 'use client';
 import { Card as CardType } from '@/types';
 import { CARD_COLORS } from '@/lib/constants';
 import { resolveMediaUrl } from '@/lib/api';
 import { useRef, useState, useCallback, useEffect } from 'react';
 import { Maximize2, MoreHorizontal } from 'lucide-react';
+
 const TYPE_EMOJI: Record<string, string> = {
   richtext: '📝', link: '🔗', image: '🖼️', pdf: '📄', article: '📰',
 };
+
 interface Props {
   card: CardType;
   scale: number;
@@ -25,6 +34,15 @@ interface Props {
   scrollContainerRef?: React.RefObject<HTMLDivElement | null>;
 }
 
+/**
+ * Renders the first page of a PDF document as a static vector canvas thumbnail using PDF.js.
+ * 
+ * DESIGN DECISION:
+ * To avoid locking Next.js SSR build threads and bloating bundle sizes, pdfjs-dist and its
+ * heavy Web Worker (`pdf.worker.mjs`) are loaded dynamically as a dynamic import on mounting.
+ * Canvas resolution is adjusted against the system's `devicePixelRatio` to prevent blurry text
+ * on high-DPI screens (Retina displays).
+ */
 function PdfThumbnail({ url, title }: { url?: string; title: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>(url ? 'loading' : 'error');
@@ -119,9 +137,9 @@ function PdfThumbnail({ url, title }: { url?: string; title: string }) {
 function cleanContent(content: string): string {
   if (!content) return '';
   let cleaned = content;
-  
+
   // Resolve relative media paths in Tauri for previews
-  const isTauri = typeof window !== 'undefined' && 
+  const isTauri = typeof window !== 'undefined' &&
     (window.location.protocol === 'tauri:' || (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !== undefined);
   if (isTauri) {
     const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
@@ -165,6 +183,7 @@ export default function CanvasCard({
       onSelect();
       return;
     }
+    // Prevent dragging if interacting with specific UI buttons/controls
     if (
       (e.target as HTMLElement).closest('.card-menu-btn') ||
       (e.target as HTMLElement).closest('.card-resize-handle') ||
@@ -187,10 +206,23 @@ export default function CanvasCard({
 
     setDragging(true);
 
-    const EDGE_ZONE = 60;
-    const SPEED_FAST = 12;
-    const SPEED_SLOW = 4;
+    // Auto-scroll zones: boundaries near viewport edge to trigger scrolling when dragging.
+    const EDGE_ZONE = 60; // Distance in pixels from container edges to trigger scrolling
+    const SPEED_FAST = 12; // Auto-scroll speed when user is pushed deeply into the edge
+    const SPEED_SLOW = 4;  // Auto-scroll speed when user is slightly past the edge border
 
+    /**
+     * Calculates the card's relative coordinate position on the infinite canvas.
+     * 
+     * WHY coordinate math accounts for scale and scroll offsets:
+     * 1. `(lastClientX - startX) / scale`: Screen pixel changes (clientX/Y) must be normalized by
+     *    the zoom `scale` level. Zooming in/out changes the physical size of canvas coordinates
+     *    relative to screen-space coordinates. Without this division, movement speeds would drift.
+     * 2. `scrollDx/Dy`: Programmable or manual scrolling shifts the coordinate system relative to
+     *    the viewport. We calculate the scroll delta from the start of the drag and add it to the position
+     *    to keep the card anchored to the mouse pointer.
+     * 3. `boundaryW`: Clamps card horizontal coordinates to prevent dragging cards completely out-of-bounds.
+     */
     const getCardPos = () => {
       const dx = (lastClientX - startX) / scale;
       const dy = (lastClientY - startY) / scale;
@@ -207,11 +239,20 @@ export default function CanvasCard({
       return { x, y };
     };
 
+    /**
+     * Seamless edge-zone auto-scroll loop.
+     * 
+     * WHY we run autoScrollTick inside requestAnimationFrame:
+     * When a user drags a card to the edge of the screen and stops moving the mouse, mousemove events
+     * cease firing. An animation frame tick allows the canvas to continue scrolling programmatically
+     * and updates the card position smoothly every frame.
+     */
     const autoScrollTick = () => {
       if (!container) return;
       const rect = container.getBoundingClientRect();
       let velX = 0, velY = 0;
 
+      // Vertical & horizontal edge zone analysis
       if (lastClientX > rect.right - EDGE_ZONE) {
         velX = lastClientX > rect.right - 30 ? SPEED_FAST : SPEED_SLOW;
       } else if (lastClientX < rect.left + EDGE_ZONE) {
@@ -372,25 +413,25 @@ export default function CanvasCard({
 
   const posStyle = uniformGrid
     ? {
-        position: 'relative' as const,
-        left: 'auto',
-        top: 'auto',
-        width: '100%',
-        height: '100%',
-        zIndex: card.zIndex ?? 1,
-        minHeight: 0,
-        backgroundColor: card.color,
-      }
+      position: 'relative' as const,
+      left: 'auto',
+      top: 'auto',
+      width: '100%',
+      height: '100%',
+      zIndex: card.zIndex ?? 1,
+      minHeight: 0,
+      backgroundColor: card.color,
+    }
     : {
-        left: card.x,
-        top: card.y,
-        width: card.width,
-        height: card.height,
-        minWidth: 0,
-        minHeight: 0,
-        zIndex: card.zIndex ?? 1,
-        backgroundColor: card.color,
-      };
+      left: card.x,
+      top: card.y,
+      width: card.width,
+      height: card.height,
+      minWidth: 0,
+      minHeight: 0,
+      zIndex: card.zIndex ?? 1,
+      backgroundColor: card.color,
+    };
 
   return (
     <div

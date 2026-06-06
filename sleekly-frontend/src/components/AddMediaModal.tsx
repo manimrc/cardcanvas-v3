@@ -1,3 +1,10 @@
+/**
+ * @file AddMediaModal.tsx
+ * @description Dialog modal handling media addition (images, PDFs, web links) to the canvas.
+ * Implements a dual-upload model supporting local computer uploads, web link references,
+ * as well as direct drag-and-drop drops and clipboard copy-paste event intercepts.
+ */
+
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Upload, Clipboard, Link2 } from 'lucide-react';
@@ -28,12 +35,16 @@ export default function AddMediaModal({ open, onClose, onConfirm }: Props) {
     setProgress(0);
   }, []);
 
+  // Set keyboard focus inside modal boundary on load to trap tab navigation
   useEffect(() => {
     if (!open) { reset(); return; }
     const t = setTimeout(() => panelRef.current?.focus(), 0);
     return () => clearTimeout(t);
   }, [open, reset]);
 
+  /**
+   * Verifies mime-type matches board capability (images and PDFs) and sends a multipart request to the Rust media store.
+   */
   const handleFile = useCallback(async (file: File | null | undefined) => {
     if (!file || !user) return;
 
@@ -57,6 +68,11 @@ export default function AddMediaModal({ open, onClose, onConfirm }: Props) {
     }
   }, [user]);
 
+  /**
+   * Clipboard paste interceptor:
+   * Parses clipboard payload items. If a file payload exists (e.g. copied screen snapshot),
+   * it initiates local asset upload. If an HTTP address is pasted, it populates the URL text field.
+   */
   const handleClipboardData = useCallback(
     async (e: ClipboardEvent) => {
       const text = e.clipboardData?.getData('text/plain')?.trim();

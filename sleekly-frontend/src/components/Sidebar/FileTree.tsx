@@ -1,3 +1,9 @@
+/**
+ * @file FileTree.tsx
+ * @description Renders a collapsible multi-level sidebar directory tree for folders and boards.
+ * Translates relational data arrays into a hierarchy on the fly.
+ */
+
 'use client';
 import { useState, useRef, useEffect } from 'react';
 import { Folder, Board } from '@/types';
@@ -25,6 +31,14 @@ interface TreeNode {
   boards: Board[];
 }
 
+/**
+ * Normalizes flat relational records into an indexed nested tree (O(N) mapping).
+ * 
+ * WHY:
+ * Database schemas store records as flat lists with references (`folderId` / `parentId`) to support clean
+ * indexes. To render this in React as collapsible nested nodes, we build an in-memory index map to relate parents
+ * and children in a single iteration pass, avoiding nested loop search overhead.
+ */
 function buildTree(folders: Folder[], boards: Board[]): TreeNode[] {
   const map = new Map<string, TreeNode>();
   folders.forEach(f => map.set(f.id, { folder: f, children: [], boards: [] }));

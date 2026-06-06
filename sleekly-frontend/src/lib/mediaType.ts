@@ -1,5 +1,18 @@
+/**
+ * @file mediaType.ts
+ * @description Infers media types (image, PDF, web link) from filename extensions or MIME headers.
+ */
+
 export type MediaKind = 'image' | 'pdf' | 'link';
 
+/**
+ * Resolves a URL/Path string to determine the target asset type.
+ * 
+ * WHY:
+ * Files uploaded to Tauri or external web servers may lack explicit metadata. By checking both MIME hints
+ * (from network upload responses) and filename patterns, we determine whether to mount standard images,
+ * render PDF vector page thumbnails via PDF.js, or fallback to an standard clickable web link preview.
+ */
 export function inferMediaType(url: string, mimeHint?: string): MediaKind {
   if (mimeHint) {
     if (mimeHint.startsWith('image/')) return 'image';

@@ -1,3 +1,16 @@
+/**
+ * @file ConfirmDialog.tsx
+ * @description A generic confirmation dialog modal.
+ * 
+ * ACCESSIBILITY & SAFETY CONTROLS:
+ * 1. **Safety Focus Target**:
+ *    Upon mount, the modal automatically targets focus to the 'Cancel' action button (`cancelBtn?.focus()`).
+ *    This prevents destructive actions (like card deletions) from being executed if the user is typing
+ *    quickly and accidentally presses the Space or Enter key as the dialog pops up.
+ * 2. **Global Key Triggers**:
+ *    Esc maps to `onCancel()` and Enter maps to `onConfirm()`.
+ */
+
 'use client';
 import { useEffect, useRef } from 'react';
 import { AlertTriangle, X } from 'lucide-react';

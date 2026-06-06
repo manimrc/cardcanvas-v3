@@ -1,3 +1,16 @@
+/**
+ * @file VoiceNote.tsx
+ * @description Custom TipTap node extension and React Node View representing contextual audio reflections.
+ *
+ * ARCHITECTURAL DESIGN & CONSTRAINTS:
+ * 1. Tiptap Atom Node: It is configured as an 'atom' node (atom: true), meaning Prosemirror treats the entire
+ *    voice note container as a single unit (cursor cannot step inside it, avoiding split tags on edit).
+ * 2. Custom Serialization: It parses and renders as a custom HTML tag `<voice-note src="..." duration="..." userId="..."></voice-note>`.
+ *    This maintains HTML standard structure while letting the react view mount dynamically on load.
+ * 3. Browser Media Heuristics: Browser codecs vary between operating systems (WebKit/Safari on macOS prefers AAC/M4A,
+ *    Chromium/Edge on Windows prefers WEBM). The startRecording method runs a fallback check to resolve the best format.
+ */
+
 'use client';
 
 import { Node, mergeAttributes } from '@tiptap/core';
@@ -7,34 +20,43 @@ import { Play, Pause, Mic, Square, Trash2, FolderOpen } from 'lucide-react';
 import { getDesktopService } from '@/lib/desktop/desktopAdapter';
 import { resolveMediaUrl } from '@/lib/api';
 
-// React Node View Component for the editor rendering
+/**
+ * React Node View Component for the editor rendering.
+ * Renders an interactive recording/setup interface when the note is empty,
+ * and a styled seekable media player when the source exists.
+ */
 function VoiceNoteView({ node, updateAttributes, deleteNode }: NodeViewProps) {
   const { src, duration } = node.attrs;
 
-  // Recording states
+  // Recording lifecycle states
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
 
-  // Availability & Playback states
+  // Hardware states
   const [isMicAvailable, setIsMicAvailable] = useState<boolean | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [audioDuration, setAudioDuration] = useState(0);
 
-  // Effect to check mic availability
+  // Probe microphone permission and availability inside the Webview context.
+  // Note: Local Tauri wrappers require specific Info.plist keys (NSMicrophoneUsageDescription)
+  // to prevent hardware access lockouts on macOS.
   useEffect(() => {
     const available = !!(typeof navigator !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
     setIsMicAvailable(available);
   }, []);
 
-  // Refs
+  // Refs for tracking system objects across re-renders
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Recording controls
+  /**
+   * Probes supported MIME containers on the platform and starts audio acquisition.
+   * Feeds raw audio buffers to chunks array and auto-saves to backend on stop.
+   */
   const startRecording = async () => {
     if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       alert('Microphone access is not supported or permitted in this context.');
@@ -43,7 +65,10 @@ function VoiceNoteView({ node, updateAttributes, deleteNode }: NodeViewProps) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      // Determine the best supported audio container and extension
+      // CODEC RESOLUTION:
+      // iOS / macOS WebKit natively prefers M4A/AAC files and lacks WEBM recording support.
+      // Windows WebView2/Chromium has native WEBM support but lacks default AAC encoding.
+      // Probe support sequentially to prevent encoding error failures at runtime.
       let mimeType = 'audio/webm';
       let extension = 'webm';
       if (typeof MediaRecorder !== 'undefined') {
@@ -72,6 +97,7 @@ function VoiceNoteView({ node, updateAttributes, deleteNode }: NodeViewProps) {
       };
 
       mediaRecorder.onstop = async () => {
+        // Compute formatted duration (MM:SS) manually to avoid loading overhead.
         const elapsedMs = Date.now() - startTime;
         const durationSec = Math.round(elapsedMs / 1000);
         const mins = Math.floor(durationSec / 60).toString().padStart(2, '0');
@@ -81,12 +107,13 @@ function VoiceNoteView({ node, updateAttributes, deleteNode }: NodeViewProps) {
         const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
         const file = new File([audioBlob], `voice_${Date.now()}.${extension}`, { type: mimeType });
 
+        // Dispatch upload to desktop adapter which automatically routes either to Rust backend or HTTP REST api.
         const uploadedUrl = await getDesktopService().uploadMedia(file, node.attrs.userId || '');
         if (uploadedUrl) {
           updateAttributes({ src: uploadedUrl, duration: formattedDuration });
         }
 
-        // Stop all tracks to release mic
+        // Release hardware resources immediately.
         stream.getTracks().forEach(track => track.stop());
       };
 
@@ -116,12 +143,14 @@ function VoiceNoteView({ node, updateAttributes, deleteNode }: NodeViewProps) {
     }
   };
 
-  // Upload/File selector controls
+  /**
+   * Handles local audio files upload selection.
+   * Uses URL blob wrapper to query metadata and read duration properties.
+   */
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Get audio duration
     const getAudioDuration = (audioFile: File): Promise<string> => {
       return new Promise((resolve) => {
         const audio = new Audio();
@@ -147,14 +176,14 @@ function VoiceNoteView({ node, updateAttributes, deleteNode }: NodeViewProps) {
     }
   };
 
-  // Cleanup timers and recorders on unmount
+  // Safe timer disposal on element unmount.
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, []);
 
-  // Playback sync
+  // Sync state machine hooks with HTML5 Audio playback event loop triggers.
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -207,7 +236,6 @@ function VoiceNoteView({ node, updateAttributes, deleteNode }: NodeViewProps) {
     return `${mins}:${secs}`;
   };
 
-  // 1. Rendering Recording/Empty State UI
   if (!src) {
     return (
       <NodeViewWrapper className="voice-note-node" style={{ margin: '16px 0', display: 'block' }}>
@@ -277,7 +305,6 @@ function VoiceNoteView({ node, updateAttributes, deleteNode }: NodeViewProps) {
     );
   }
 
-  // 2. Rendering Playback UI
   return (
     <NodeViewWrapper className="voice-note-node" style={{ margin: '16px 0', display: 'block' }}>
       <div className="voice-note-block voice-note-playback">
@@ -323,7 +350,7 @@ function VoiceNoteView({ node, updateAttributes, deleteNode }: NodeViewProps) {
 export const VoiceNote = Node.create({
   name: 'voiceNote',
   group: 'block',
-  atom: true,
+  atom: true, // Treated as a atomic non-splittable block element
   defining: true,
 
   addAttributes() {

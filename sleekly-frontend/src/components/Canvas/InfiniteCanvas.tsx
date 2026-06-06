@@ -1,3 +1,23 @@
+/**
+ * @file InfiniteCanvas.tsx
+ * @description The main workspace viewport component that handles absolute coordinate space card rendering.
+ *
+ * DESIGN CONSTRAINTS & CRITICAL LOGIC:
+ * 1. **Scroll Persistence & Recovery**:
+ *    The whiteboard coordinate space is theoretically infinite but backed by physical CSS boundary
+ *    sizes (`innerW`/`innerH`). Since users pan across large layouts, we cache the viewport scroll positions
+ *    (`scrollLeft` / `scrollTop`) inside `useLayoutEffect` on board transitions, restoring viewport focus
+ *    exactly where they left off to provide a seamless application flow.
+ * 2. **Screen-to-Canvas Vector Translation**:
+ *    Since cards are placed on an absolute grid relative to the `.canvas-inner` container, screen-space click events
+ *    (e.g., coordinates returned from browser double-click) must be translated to match canvas coordinates.
+ *    This is solved in `screenToCanvas` by adding the container's active `scrollLeft`/`scrollTop` offsets.
+ * 3. **Non-Overlapping Spatially-Aware Positioning**:
+ *    To maintain clear layout visibility, we perform Axis-Aligned Bounding Box (AABB) overlap tests during
+ *    card Drops and Resizes. If a card overlaps another, we query `findNonOverlappingPosition` to resolve
+ *    positions without rendering overlaps.
+ */
+
 'use client';
 import {
   useRef,
@@ -13,6 +33,7 @@ import CanvasCard from './CanvasCard';
 import ContextMenu from '../ContextMenu';
 import ConfirmDialog from '../ConfirmDialog';
 import { findNonOverlappingPosition, hasOverlap } from '@/lib/collision';
+import { exportAsPng, exportAsHtml, exportAsMarkdown } from '@/lib/utils/cardExport';
 
 export type InfiniteCanvasHandle = {
   getScrollContainer: () => HTMLDivElement | null;
@@ -72,6 +93,20 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, Props>(function Infinite
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; cardId?: string } | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ cardId: string; title: string } | null>(null);
+  const [notification, setNotification] = useState<string | null>(null);
+  const notificationTimer = useRef<NodeJS.Timeout | null>(null);
+
+  const showNotification = useCallback((msg: string) => {
+    if (notificationTimer.current) clearTimeout(notificationTimer.current);
+    setNotification(msg);
+    notificationTimer.current = setTimeout(() => setNotification(null), 3000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (notificationTimer.current) clearTimeout(notificationTimer.current);
+    };
+  }, []);
 
   useImperativeHandle(ref, () => ({
     getScrollContainer: () => containerRef.current,
@@ -127,6 +162,14 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, Props>(function Infinite
     setContextMenu({ x: e.clientX, y: e.clientY, cardId });
   }, []);
 
+  /**
+   * Translates absolute screen-space mouse pixel coordinates (clientX/clientY)
+   * into relative whiteboard coordinates.
+   * 
+   * WHY: Rect bounds offset the container starting point relative to screen (0,0).
+   * Adding the container's `scrollLeft`/`scrollTop` offsets maps screen positions to the exact place
+   * inside the scrolled inner canvas.
+   */
   const screenToCanvas = useCallback((screenX: number, screenY: number) => {
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return { x: 0, y: 0 };
@@ -136,7 +179,13 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, Props>(function Infinite
     };
   }, []);
 
-  /** During drag — no collision, just move */
+  /**
+   * Tracks temporary coordinates as the card is actively dragged.
+   * 
+   * WHY: Performance optimization. We update coordinate state directly during dragging without checking
+   * for collisions. Checking AABB collisions every single frame of a mousemove handler would trigger heavy React
+   * re-renders of the entire canvas cards array and cause visible input lag.
+   */
   const handleMove = useCallback(
     (id: string, x: number, y: number) => {
       if (readOnly) return;
@@ -145,7 +194,14 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, Props>(function Infinite
     [onUpdateCard, readOnly]
   );
 
-  /** On drop — resolve collisions */
+  /**
+   * Finalizes card positioning once a drag action concludes.
+   * 
+   * WHY:
+   * 1. Clamps horizontal values `clampedX` to ensure the card stays within the bounds of the active workspace.
+   * 2. Resolves collisions using `findNonOverlappingPosition` to find the nearest non-colliding location,
+   *    ensuring visual structure is maintained.
+   */
   const handleDrop = useCallback(
     (id: string, x: number, y: number) => {
       if (readOnly) return;
@@ -183,6 +239,13 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, Props>(function Infinite
     [onUpdateCard]
   );
 
+  /**
+   * Resizes cards with collision checks.
+   * 
+   * WHY: If the target size overlaps with neighboring cards, we test horizontal and vertical axes
+   * independently (`widthOk`, `heightOk`). This allows the card to grow as far as possible until it meets
+   * a collision boundary, instead of completely blocking the resize action.
+   */
   const handleResize = useCallback(
     (id: string, width: number, height: number) => {
       if (readOnly) return;
@@ -225,77 +288,121 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, Props>(function Infinite
     [onCreateCard, readOnly, screenToCanvas]
   );
 
-  const cardMenuItems = contextMenu
-    ? contextMenu.cardId
-      ? [
+  const cardMenuItems = (() => {
+    if (!contextMenu) return [];
+    if (contextMenu.cardId) {
+      const card = cards.find(x => x.id === contextMenu.cardId);
+      const items: {
+        label: string;
+        icon?: string;
+        onClick: () => void;
+        danger?: boolean;
+        divider?: boolean;
+        disabled?: boolean;
+      }[] = [
+        {
+          label: 'Edit Card',
+          icon: '✏️',
+          onClick: () => {
+            if (card) onEditCard(card, 'edit');
+          },
+        },
+        {
+          label: 'Copy Card',
+          icon: '📋',
+          onClick: () => {
+            if (card && onCopyCard) onCopyCard(card);
+          },
+        },
+        {
+          label: 'Cut Card',
+          icon: '✂️',
+          onClick: () => {
+            if (card && onCutCard) onCutCard(card);
+          },
+        },
+        {
+          label: 'Delete Card',
+          icon: '🗑️',
+          danger: true,
+          onClick: () => {
+            if (card) {
+              setDeleteConfirm({ cardId: card.id, title: card.title || 'Untitled' });
+            }
+          },
+        },
+      ];
+
+      // Rich text cards support document exporting features.
+      // We dynamically append the export options (PNG, HTML, Markdown) to the card's context menu.
+      if (card && card.type === 'richtext') {
+        items.push(
           {
-            label: 'Edit Card',
-            icon: '✏️',
-            onClick: () => {
-              const c = cards.find(x => x.id === contextMenu.cardId);
-              if (c) onEditCard(c, 'edit');
-            },
+            label: '',
+            divider: true,
+            onClick: () => {},
           },
           {
-            label: 'Copy Card',
-            icon: '📋',
-            onClick: () => {
-              const c = cards.find(x => x.id === contextMenu.cardId);
-              if (c && onCopyCard) onCopyCard(c);
-            },
-          },
-          {
-            label: 'Cut Card',
-            icon: '✂️',
-            onClick: () => {
-              const c = cards.find(x => x.id === contextMenu.cardId);
-              if (c && onCutCard) onCutCard(c);
-            },
-          },
-          {
-            label: 'Delete Card',
-            icon: '🗑️',
-            danger: true,
-            onClick: () => {
-              if (contextMenu.cardId) {
-                const c = cards.find(x => x.id === contextMenu.cardId);
-                setDeleteConfirm({ cardId: contextMenu.cardId, title: c?.title || 'Untitled' });
-              }
-            },
-          },
-        ]
-      : [
-          {
-            label: 'Paste Card',
-            icon: '📋',
-            disabled: !hasClipboardItem,
-            onClick: () => {
-              if (onPasteCard) {
-                const pos = screenToCanvas(contextMenu.x, contextMenu.y);
-                onPasteCard(pos.x, pos.y);
-              }
-            },
-          },
-          {
-            label: 'Create Note',
-            icon: '📝',
-            onClick: () => {
-              const pos = screenToCanvas(contextMenu.x, contextMenu.y);
-              onCreateCard('richtext', pos.x, pos.y);
-            },
-          },
-          {
-            label: 'Add Media',
+            label: 'Export as PNG',
             icon: '🖼️',
-            onClick: () => {
-              if (onAddMediaClick) {
-                const pos = screenToCanvas(contextMenu.x, contextMenu.y);
-                onAddMediaClick(pos.x, pos.y);
-              }
+            onClick: async () => {
+              const success = await exportAsPng(card.title, card.content, { tags: card.tags });
+              if (success) showNotification('Exported as PNG');
             },
           },
-        ]
-    : [];
+          {
+            label: 'Export as HTML',
+            icon: '🌐',
+            onClick: async () => {
+              const success = await exportAsHtml(card.title, card.content, { tags: card.tags });
+              if (success) showNotification('Exported as HTML');
+            },
+          },
+          {
+            label: 'Export as Markdown',
+            icon: '📝',
+            onClick: async () => {
+              const success = await exportAsMarkdown(card.title, card.content);
+              if (success) showNotification('Exported as Markdown');
+            },
+          }
+        );
+      }
+      return items;
+    } else {
+      return [
+        {
+          label: 'Paste Card',
+          icon: '📋',
+          disabled: !hasClipboardItem,
+          onClick: () => {
+            if (onPasteCard) {
+              const pos = screenToCanvas(contextMenu.x, contextMenu.y);
+              onPasteCard(pos.x, pos.y);
+            }
+          },
+        },
+        {
+          label: 'Create Note',
+          icon: '📝',
+          onClick: () => {
+            const pos = screenToCanvas(contextMenu.x, contextMenu.y);
+            onCreateCard('richtext', pos.x, pos.y);
+          },
+        },
+        {
+          label: 'Add Media',
+          icon: '🖼️',
+          onClick: () => {
+            if (onAddMediaClick) {
+              const pos = screenToCanvas(contextMenu.x, contextMenu.y);
+              onAddMediaClick(pos.x, pos.y);
+            }
+          },
+        },
+      ];
+    }
+  })();
 
   return (
     <>
@@ -376,6 +483,12 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, Props>(function Infinite
           }}
           onCancel={() => setDeleteConfirm(null)}
         />
+      )}
+
+      {notification && (
+        <div className="export-toast">
+          <span>✅</span> {notification}
+        </div>
       )}
     </>
   );

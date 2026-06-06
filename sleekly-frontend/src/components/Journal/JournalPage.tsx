@@ -209,13 +209,20 @@ export default function JournalPage({ date, entry, onSave }: Props) {
     setTodos(parsedTodos);
   }, [entry]);
 
-  // Keep latest state values in a ref to avoid stale closures in debounced save handler
+  /**
+   * Ref-based State Mirroring:
+   * 
+   * WHY: Since state updates trigger frequently as the user types, we save updates in a 1.5s debounced loop.
+   * If the asynchronous save callback accessed React state variables directly, JavaScript closures would capture
+   * stale values from when the timeout was created. By keeping a mutable React reference object (`stateRef.current`)
+   * updated on every render, the save function always reads the most current user inputs when the timeout fires.
+   */
   const stateRef = useRef({ mood, gratefulText, todos, longTermVision, tinyWin, reflections, photos });
   stateRef.current = { mood, gratefulText, todos, longTermVision, tinyWin, reflections, photos };
 
   const hasUnsavedChanges = useRef(false);
 
-  // Debounced save
+  // Debounced save timer
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const triggerSave = useCallback(() => {
     hasUnsavedChanges.current = true;
@@ -232,10 +239,16 @@ export default function JournalPage({ date, entry, onSave }: Props) {
         reflection_answers: current.reflections,
         photo_urls: current.photos,
       });
-    }, 1500);
+    }, 1500); // 1.5 seconds debounce threshold to prevent server write bottlenecks
   }, [onSave]);
 
-  // Flush any pending save immediately on unmount
+  /**
+   * Safe Component Unmount Flush:
+   * 
+   * WHY: If the component unmounts (e.g. user navigates away or logs out) while the debounce timer
+   * is active, changes would normally be lost. This hook detects if unsaved modifications exist,
+   * cancels the active timer, and immediately writes the changes to the database.
+   */
   useEffect(() => {
     return () => {
       if (hasUnsavedChanges.current) {

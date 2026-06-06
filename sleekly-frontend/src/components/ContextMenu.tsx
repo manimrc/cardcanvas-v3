@@ -1,3 +1,9 @@
+/**
+ * @file ContextMenu.tsx
+ * @description A floating context menu dropdown positioning itself at mouse-click coordinates (X, Y).
+ * Implements a click-outside observer hook to automatically close the menu when clicking elsewhere.
+ */
+
 'use client';
 import { useEffect, useRef } from 'react';
 

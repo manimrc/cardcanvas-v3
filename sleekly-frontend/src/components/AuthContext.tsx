@@ -1,3 +1,19 @@
+/**
+ * @file AuthContext.tsx
+ * @description Global React context provider storing active user state and managing route-level redirect guards.
+ *
+ * SECURITY & ROUTING BOUNDARIES:
+ * 1. **Client Boot Session Hydration**:
+ *    On client mount, the provider triggers a session check against the backend `/api/auth/me`.
+ *    Because authentication is backed by HTTP-only cookies, the browser automatically forwards credentials.
+ *    Once the API resolves, the provider hydrates the UI context and resolves the `isLoading` block.
+ * 2. **Unauthenticated Redirect Guard**:
+ *    When `isLoading === false`, the provider evaluates route authorization.
+ *    If no user exists and the client pathname targets a private workspace route (like `/` or `/board`),
+ *    the guard redirects the layout view to `/login`.
+ *    Conversely, if a valid user is present and tries to load authentication views, the guard redirects them to `/`.
+ */
+
 'use client';
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';

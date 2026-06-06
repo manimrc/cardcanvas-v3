@@ -1,3 +1,10 @@
+/**
+ * @file reset-password/page.tsx
+ * @description Secure local-first password reset page.
+ * Uses the client's cached 12-character Recovery Key payload to authorize password modification
+ * without email loops or server-side OAuth requirements.
+ */
+
 'use client';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';

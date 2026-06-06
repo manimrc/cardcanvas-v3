@@ -1,3 +1,25 @@
+/**
+ * @file RichTextEditor.tsx
+ * @description Sleekly's main Notion-style rich text editor component powered by TipTap (ProseMirror).
+ * 
+ * ARCHITECTURAL DESIGN DECISIONS:
+ * 1. **Card Typography Metadata Serialization**:
+ *    Instead of introducing database schema migrations or complex JSON relational columns to store
+ *    individual card styling preferences (e.g. font family, font size, line spacing), we serialize
+ *    these preferences into a standard HTML comment block: `<!-- sleekly-style: {"font":"...", ...} -->`.
+ *    This comment block is injected at the beginning of the raw HTML content string. During mounting,
+ *    `parseStyleMetadata` parses and strips this comment block to set React styling states,
+ *    and during saving/exporting, we package the states back into the comment envelope.
+ * 2. **ProseMirror-to-React Selection Syncing**:
+ *    ProseMirror runs a separate transaction-based document model that does not trigger standard React
+ *    state hook changes for selection or cursor-movement updates. To keep the formatting toolbar buttons
+ *    (Bold, Italic, active lists) visually synchronized with the cursor position, we subscribe to
+ *    ProseMirror's `'transaction'` listener and increment a reactive `selectionTick` state.
+ * 3. **Dynamic Client-Side Markdown Parser**:
+ *    To support pasting rich markdown formatting directly into TipTap without bloating the initial
+ *    page bundle, the heavy parsing libraries (`marked`) are lazily imported when paste events are triggered.
+ */
+
 'use client';
 import {
   useEditor,
@@ -35,10 +57,17 @@ import {
   Quote, Code, AlignLeft, AlignCenter, AlignRight,
   Highlighter, X, Undo, Redo,
   BookOpen, Minimize2, Table as TableIcon, Mic,
-  Tag, Type
+  Tag, Type, Share2, PanelRight
 } from 'lucide-react';
+import { exportAsPng, exportAsHtml, exportAsMarkdown } from '@/lib/utils/cardExport';
 
-/** Heuristic: does this clipboard text look like markdown? */
+/** 
+ * Heuristic: checks if pasted text includes common Markdown patterns.
+ * 
+ * WHY: This determines if we should intercept the paste event and run it through our Markdown parser,
+ * or let ProseMirror handle it normally as plain text. It helps preserve block elements (headers, lists, tables)
+ * during copy-paste operations from editors like VS Code or Obsidian.
+ */
 function looksLikeMarkdown(text: string): boolean {
   return (
     /^#{1,6}\s/m.test(text) ||           // headings
@@ -53,7 +82,10 @@ function looksLikeMarkdown(text: string): boolean {
   );
 }
 
-/** Convert markdown text → HTML via marked (loaded lazily) */
+/** 
+ * Lazily loads the Markdown parser and compiles Markdown markup to HTML.
+ * Uses strict GitHub Flavored Markdown rules (GFM) but preserves line breaks configuration.
+ */
 async function markdownToHtml(md: string): Promise<string> {
   const { marked } = await import('marked');
   marked.setOptions({ gfm: true, breaks: false });
@@ -189,9 +221,9 @@ function parseStyleMetadata(content: string) {
 function cleanContent(content: string): string {
   if (!content) return '';
   let cleaned = content;
-  
+
   // Resolve relative media paths in Tauri for the editor
-  const isTauri = typeof window !== 'undefined' && 
+  const isTauri = typeof window !== 'undefined' &&
     (window.location.protocol === 'tauri:' || (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !== undefined);
   if (isTauri) {
     const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
@@ -245,6 +277,18 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
   const [fontSize, setFontSize] = useState<'small' | 'normal' | 'large'>(styleMeta.current.size);
   const [lineSpacing, setLineSpacing] = useState<'tight' | 'normal' | 'relaxed'>(styleMeta.current.spacing);
   const [showStyleMenu, setShowStyleMenu] = useState(false);
+  const [showShareMenu, setShowShareMenu] = useState(false);
+  const [notification, setNotification] = useState<string | null>(null);
+  const notificationTimer = useRef<NodeJS.Timeout | null>(null);
+  const [showOutline, setShowOutline] = useState(true);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [selectionTick, setSelectionTick] = useState(0);
+
+  const showNotification = useCallback((msg: string) => {
+    if (notificationTimer.current) clearTimeout(notificationTimer.current);
+    setNotification(msg);
+    notificationTimer.current = setTimeout(() => setNotification(null), 3000);
+  }, []);
 
   const zoomScaleRef = useRef(zoomScale);
   useEffect(() => {
@@ -386,6 +430,53 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
       },
     },
   });
+
+  /**
+   * Executes document exports for supported formats (PNG, HTML, Markdown).
+   * Automatically packages editor content and style metadata to maintain design fidelity.
+   */
+  const handleExport = useCallback(async (format: 'png' | 'html' | 'md') => {
+    setShowShareMenu(false);
+    const content = editor?.getHTML() || '';
+    const tags = tagsInput.split(',').map(t => t.trim()).filter(Boolean);
+    const opts = { tags, fontFamily, fontSize, lineSpacing };
+    let success = false;
+    
+    switch (format) {
+      case 'png':   
+        success = await exportAsPng(title, content, opts); 
+        break;
+      case 'html':  
+        success = await exportAsHtml(title, content, opts); 
+        break;
+      case 'md':    
+        success = await exportAsMarkdown(title, content); 
+        break;
+    }
+    
+    if (success) {
+      const labels = { png: 'Exported as PNG', html: 'Exported as HTML', md: 'Exported as Markdown' };
+      showNotification(labels[format]);
+    }
+  }, [editor, title, tagsInput, fontFamily, fontSize, lineSpacing, showNotification]);
+
+  /**
+   * Selection / Cursor update bridge:
+   * TipTap's `useEditor` hook does not trigger a React state refresh during cursor selections
+   * or cursor movements (which do not modify the content itself).
+   * Listening to the 'transaction' event forces a component re-render on cursor placement changes,
+   * keeping the formatting toolbar (Bold, Italic, lists, etc.) visual states synchronized with selections.
+   */
+  useEffect(() => {
+    if (!editor) return;
+    const handleTransaction = () => {
+      setSelectionTick(t => t + 1);
+    };
+    editor.on('transaction', handleTransaction);
+    return () => {
+      editor.off('transaction', handleTransaction);
+    };
+  }, [editor]);
 
   useEffect(() => {
     if (!editor) return;
@@ -572,13 +663,13 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
     if (!focusMode) {
       // Enter focus mode: make editor read-only + browser fullscreen
       editor?.setEditable(false);
-      overlayRef.current?.requestFullscreen?.().catch(() => {});
+      overlayRef.current?.requestFullscreen?.().catch(() => { });
       setFocusMode(true);
     } else {
       // Exit focus mode: restore editing + exit browser fullscreen
       editor?.setEditable(true);
       if (document.fullscreenElement) {
-        document.exitFullscreen?.().catch(() => {});
+        document.exitFullscreen?.().catch(() => { });
       }
       setFocusMode(false);
     }
@@ -602,16 +693,16 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
       .map(t => t.trim())
       .filter(Boolean);
     let newContent = editor?.getHTML() || '';
-    
+
     // Strip absolute base URL from media paths for database portability
     const apiBase = typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080') : 'http://localhost:8080';
     const regex = new RegExp(`src="${apiBase.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}/api/media/files/`, 'g');
     newContent = newContent.replace(regex, 'src="/api/media/files/');
-    
+
     // Append card-level typography styling metadata
     const finalContent = newContent + `<!-- sleekly-style: ${JSON.stringify({ font: fontFamily, size: fontSize, spacing: lineSpacing })} -->`;
 
-    const hasChanges = 
+    const hasChanges =
       title !== card.title ||
       color !== card.color ||
       url !== (card.url || '') ||
@@ -705,7 +796,7 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
   if (mode === 'preview' && (card.type === 'image' || card.type === 'pdf') && url) {
     return (
       <div className="modal-overlay" style={{ background: 'rgba(0,0,0,0.9)', zIndex: 100000 }} onClick={handleClose}>
-        <button 
+        <button
           onClick={handleClose}
           style={{ position: 'absolute', top: 20, right: 24, background: 'rgba(255,255,255,0.1)', color: '#fff', border: 'none', borderRadius: '50%', width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', zIndex: 100001 }}
         >
@@ -715,7 +806,7 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
           {card.type === 'pdf' ? (
             <iframe src={`${resolveMediaUrl(url)}#view=FitH&pagemode=thumbs`} style={{ width: '100%', height: '100%', border: 'none', borderRadius: 8, background: '#fff' }} title={title} />
           ) : (
-            <div 
+            <div
               ref={previewContainerRef}
               style={{
                 position: 'relative',
@@ -840,8 +931,39 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
           </div>
           <div className="header-spacer" />
 
+          <div style={{ position: 'relative' }}>
+            <button
+              className={`editor-top-action-btn${showShareMenu ? ' active' : ''}`}
+              onClick={() => setShowShareMenu(v => !v)}
+              title="Share / Export"
+            >
+              <Share2 size={14} />
+            </button>
+            {showShareMenu && (
+              <>
+                <div
+                  style={{ position: 'fixed', inset: 0, zIndex: 999 }}
+                  onClick={() => setShowShareMenu(false)}
+                />
+                <div className="share-dropdown" style={{ zIndex: 1000 }} onClick={e => e.stopPropagation()}>
+                  <button onClick={() => handleExport('png')}>🖼️ Export as PNG</button>
+                  <button onClick={() => handleExport('html')}>🌐 Export as HTML</button>
+                  <button onClick={() => handleExport('md')}>📝 Export as Markdown</button>
+                </div>
+              </>
+            )}
+          </div>
+          <button
+            className={`editor-top-action-btn focus-mode-btn${showOutline ? ' active' : ''}`}
+            style={{ marginLeft: 8 }}
+            onClick={() => setShowOutline(v => !v)}
+            title={showOutline ? "Hide outline" : "Show outline"}
+          >
+            <PanelRight size={14} />
+          </button>
           <button
             className="editor-top-action-btn focus-mode-btn"
+            style={{ marginLeft: 8 }}
             onClick={toggleFocusMode}
             title="Focus mode — distraction-free reading"
           >
@@ -887,7 +1009,7 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
             <button className={`editor-toolbar-btn${editor.isActive({ textAlign: 'left' }) ? ' active' : ''}`} onClick={() => editor.chain().focus().setTextAlign('left').run()}><AlignLeft size={15} /></button>
             <button className={`editor-toolbar-btn${editor.isActive({ textAlign: 'center' }) ? ' active' : ''}`} onClick={() => editor.chain().focus().setTextAlign('center').run()}><AlignCenter size={15} /></button>
             <button className={`editor-toolbar-btn${editor.isActive({ textAlign: 'right' }) ? ' active' : ''}`} onClick={() => editor.chain().focus().setTextAlign('right').run()}><AlignRight size={15} /></button>
-            
+
             {/* Style settings dropdown */}
             <div className="editor-toolbar-divider" />
             <div style={{ position: 'relative' }}>
@@ -903,9 +1025,9 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
               {showStyleMenu && (
                 <>
                   {/* Overlay to close menu */}
-                  <div 
-                    style={{ position: 'fixed', inset: 0, zIndex: 999 }} 
-                    onClick={() => setShowStyleMenu(false)} 
+                  <div
+                    style={{ position: 'fixed', inset: 0, zIndex: 999 }}
+                    onClick={() => setShowStyleMenu(false)}
                   />
                   <div className="typography-dropdown-menu">
                     {/* Font Family Section */}
@@ -1006,9 +1128,9 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
 
         {/* ---- Page Body ---- */}
         <div className="editor-modal-body">
-          <div 
+          <div
             ref={scrollContainerRef}
-            className={`editor-content font-${fontFamily} size-${fontSize} spacing-${lineSpacing}`} 
+            className={`editor-content font-${fontFamily} size-${fontSize} spacing-${lineSpacing}`}
             style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}
           >
             <div className="editor-readable-column">
@@ -1064,33 +1186,42 @@ export default function RichTextEditor({ card, mode = 'preview', onSave, onClose
           </div>
 
           {/* ---- Table of Contents Sidebar ---- */}
-          <div className="editor-toc-sidebar">
-            <div className="toc-title">Outline</div>
-            {headings.length === 0 ? (
-              <div className="toc-empty">No headings yet. Use H1, H2, or H3 to structure your note.</div>
-            ) : (
-              <div className="toc-list">
-                {headings.map(h => (
-                  <button
-                    key={h.id}
-                    type="button"
-                    className={`toc-item level-${h.level}`}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      scrollToHeading(h.pos);
-                    }}
-                    title={h.text}
-                  >
-                    {h.text}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          {showOutline && (
+            <div className="editor-toc-sidebar">
+              <div className="toc-title">Outline</div>
+              {headings.length === 0 ? (
+                <div className="toc-empty">No headings yet. Use H1, H2, or H3 to structure your note.</div>
+              ) : (
+                <div className="toc-list">
+                  {headings.map(h => (
+                    <button
+                      key={h.id}
+                      type="button"
+                      className={`toc-item level-${h.level}`}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        scrollToHeading(h.pos);
+                      }}
+                      title={h.text}
+                    >
+                      {h.text}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
       </div>
+
+      {/* Toast Notification */}
+      {notification && (
+        <div className="export-toast">
+          <span>✅</span> {notification}
+        </div>
+      )}
     </div>
   );
 }

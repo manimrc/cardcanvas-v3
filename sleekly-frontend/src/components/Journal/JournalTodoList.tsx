@@ -1,3 +1,10 @@
+/**
+ * @file JournalTodoList.tsx
+ * @description In-line todo-list component for the Cozy Journal workspace.
+ * Renders lists of tasks with interactive checkbox completion states and edit text handlers,
+ * reporting state mutations back up to the parent save orchestrator.
+ */
+
 'use client';
 import { useState } from 'react';
 import { Trash2, Plus } from 'lucide-react';

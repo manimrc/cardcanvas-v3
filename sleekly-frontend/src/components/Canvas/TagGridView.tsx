@@ -1,3 +1,9 @@
+/**
+ * @file TagGridView.tsx
+ * @description Renders a collection of cards matching the selected tag filters inside a uniform CSS grid.
+ * Reuses the standard `CanvasCard` component by triggering its `uniformGrid` mode to bypass absolute positioning values.
+ */
+
 'use client';
 import type { Card } from '@/types';
 import CanvasCard from './CanvasCard';

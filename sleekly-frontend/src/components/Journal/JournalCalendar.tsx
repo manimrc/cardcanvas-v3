@@ -44,11 +44,19 @@ export default function JournalCalendar({
 }: Props) {
   const [currentMonth, setCurrentMonth] = useState(() => startOfMonth(selectedDate));
 
+  /**
+   * Calendar Grid Builder:
+   * 
+   * WHY: Standard calendar views require full 7-day rows. If a month starts on a Wednesday, the preceding
+   * Sunday through Tuesday must be drawn as offsets from the previous month to fill the first row.
+   * `startOfWeek` and `endOfWeek` calculate the exact calendar padding offsets, yielding a complete 35-to-42 day
+   * array that forms a continuous layout grid.
+   */
   const days = useMemo(() => {
     const monthStart = startOfMonth(currentMonth);
     const monthEnd = endOfMonth(currentMonth);
-    const start = startOfWeek(monthStart, { weekStartsOn: 0 });
-    const end = endOfWeek(monthEnd, { weekStartsOn: 0 });
+    const start = startOfWeek(monthStart, { weekStartsOn: 0 }); // Sunday start
+    const end = endOfWeek(monthEnd, { weekStartsOn: 0 });       // Saturday end
 
     const result: Date[] = [];
     let day = start;

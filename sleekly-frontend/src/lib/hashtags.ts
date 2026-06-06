@@ -1,13 +1,29 @@
+/**
+ * @file hashtags.ts
+ * @description Whiteboard-wide hashtag scanning and text filtering helper functions.
+ */
+
 import type { Card } from '@/types';
 
-/** Strip HTML to plain text for hashtag scanning */
+/** 
+ * Strips HTML elements to yield a unified space-separated plain text string for scanning.
+ * 
+ * WHY: TipTap contents are stored as HTML structures (like `<p>hello <strong>world</strong></p>`).
+ * Scanning tags across raw HTML would match words embedded inside attributes (e.g. `<a href="#link">`)
+ * resulting in false positive hashtags. Stripping guarantees we only match text visible to the end user.
+ */
 export function stripHtml(html: string): string {
   return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 /**
- * All hashtag-like tokens from structured tags + title + body (HTML stripped).
- * Keys are lowercase for matching; use collectGlobalTagEntries for display labels.
+ * Extracts and lowercases unique hashtag tokens from structural metadata tags, titles, and body content.
+ * 
+ * REGEX DESIGN CHOICE:
+ * `/#([\w\u00C0-\u024F-]+)/gi`
+ * Instead of standard word-boundary patterns (`\w+`) which fail on accented or international text,
+ * this pattern covers basic alphanumerics (`\w`) combined with Latin accented blocks (`\u00C0-\u024F`)
+ * to prevent hashtags in non-English languages from being truncated.
  */
 export function extractHashtagKeys(card: Card): Set<string> {
   const keys = new Set<string>();

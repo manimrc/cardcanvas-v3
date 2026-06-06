@@ -1,3 +1,9 @@
+/**
+ * @file login/page.tsx
+ * @description Authentication page for existing users to sign in.
+ * Validates credentials against the backend API and calls context logins to trigger redirect guards.
+ */
+
 'use client';
 import { useState } from 'react';
 import Link from 'next/link';

@@ -19,10 +19,14 @@ interface Props {
 
 /**
  * Map mood_score (1–10) to a soft heatmap color.
- * Emotional palette (NOT productivity-based):
- *   High = teal/green (peaceful/joyful)
- *   Mid  = lavender (neutral)
- *   Low  = coral/amber (anxious/sad)
+ * 
+ * WHY EMOTIONAL COLOR PALETTE DESIGN CHOICE:
+ * Traditional contribution grids (e.g., GitHub) use monochromatic green gradients to represent quantity
+ * of work. For emotional tracking, monochromatic colors are poor indicators of qualitative feelings. We map
+ * scores to a spectrum reflecting psychological associations:
+ * - High (7.0 to 10.0) matches cool, soothing teals and greens representing content, joy, or peaceful states.
+ * - Mid (4.0 to 6.9) matches lavender indicating neutral, quiet, or standard tired states.
+ * - Low (1.0 to 3.9) matches warning shades like warm ambers and corals reflecting anxiety, sadness, or frustration.
  */
 function scoreToColor(score: number): string {
   if (score >= 8.5) return '#66bb9a'; // deep teal — very positive

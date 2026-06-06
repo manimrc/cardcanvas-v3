@@ -16,6 +16,13 @@ import { inferMediaType } from '@/lib/mediaType';
 import { findNonOverlappingPosition } from '@/lib/collision';
 import { PanelLeft } from 'lucide-react';
 
+/**
+ * SSR-Safe LocalStorage Wrapper:
+ * 
+ * WHY: Next.js compiles pages server-side (node environment) where browser globals like `window`
+ * and `localStorage` do not exist. We check if `window` is defined before calling localStorage APIs
+ * to prevent hydration/build compilation crashes.
+ */
 function readStorage<T>(key: string, fallback: T): T {
   if (typeof window === 'undefined') return fallback;
   try {
@@ -24,6 +31,13 @@ function readStorage<T>(key: string, fallback: T): T {
   } catch { return fallback; }
 }
 
+/**
+ * Standard RFC4122 UUID generator.
+ * 
+ * WHY: We generate IDs client-side so we can optimism-update card layouts immediately
+ * on the whiteboard screen before the database write transaction completes on the Rust backend.
+ * Uses cryptographically secure `crypto.randomUUID()` when available, and falls back to a math-based generator.
+ */
 function generateUUID(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();

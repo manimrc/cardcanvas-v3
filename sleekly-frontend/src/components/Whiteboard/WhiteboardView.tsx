@@ -1,3 +1,19 @@
+/**
+ * @file WhiteboardView.tsx
+ * @description Integrates the Excalidraw graphic whiteboard editor into Sleekly.
+ * 
+ * ARCHITECTURAL DESIGN BOUNDARIES:
+ * 1. **Dynamic Client-Side Only Mounting (ssr: false)**:
+ *    Excalidraw relies heavily on browser DOM capabilities (WebGL/Canvas drawing contexts, browser key
+ *    event hooks, and layout dimensions). Attempting to pre-compile this library inside Next.js Node.js
+ *    server-side renderer would result in server building failures (reference errors on `window` or `document`).
+ *    We lazy-load the component via `next/dynamic` with `ssr: false` to guarantee execution strictly inside client viewports.
+ * 2. **Reference-Based Event Callback Forwarding**:
+ *    Because the dynamic import creates a decoupled rendering wrapper, passing raw state-dependent callbacks directly
+ *    often triggers excessive unmount/remount cycles. We hook the change callback through a mutable reference
+ *    (`onChangeRef`), allowing Excalidraw to dispatch modifications without resetting component layouts.
+ */
+
 'use client';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';

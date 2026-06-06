@@ -1,7 +1,20 @@
 /**
- * Centralized API client for the Sleekly Rust backend.
- * All requests are sent to NEXT_PUBLIC_API_URL (default: http://localhost:8080)
- * Credentials (httpOnly cookie) are forwarded automatically via credentials: 'include'.
+ * @file api.ts
+ * @description Centralized HTTP request client interfacing the Next.js React frontend
+ * with the native Rust backend service.
+ * 
+ * DESIGN ARCHITECTURE & ROUTING RULES:
+ * 1. **Tauri Protocol Network Routing Overrides**:
+ *    In browser view environments, pages are loaded from the same hostname as the backend, allowing relative path
+ *    requests (e.g. `/api/...`) to resolve successfully.
+ *    In Tauri desktop environments, pages are loaded from a custom `tauri:` asset protocol. Under this protocol,
+ *    relative path network calls would incorrectly target the local frontend assets server.
+ *    To route network calls correctly, we detect if the client protocol matches `tauri:` or if Tauri internals are
+ *    injected, and override the request target with the explicit backend server URI (`http://localhost:8080`).
+ * 2. **Session Cookie Synchronization**:
+ *    Instead of storing access tokens (JWTs) in insecure client storage (like LocalStorage) which is vulnerable to XSS,
+ *    the Rust backend issues HttpOnly cookie-based session headers. We define `credentials: 'include'` on all fetches
+ *    to instruct the browser/webview layout engines to attach these session credentials automatically with each call.
  */
 
 const BASE_URL = typeof window !== 'undefined'
@@ -10,13 +23,16 @@ const BASE_URL = typeof window !== 'undefined'
       : '')
   : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080');
 
+/**
+ * Shared fetch wrapper routing requests, injecting default JSON headers, and checking response codes.
+ */
 async function request<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...options,
-    credentials: 'include',
+    credentials: 'include', // Mandated for HttpOnly session cookie verification
     headers: {
       'Content-Type': 'application/json',
       ...options.headers,
@@ -28,7 +44,7 @@ async function request<T>(
     throw new Error(err.error || `Request failed: ${res.status}`);
   }
 
-  // 204 No Content
+  // 204 No Content handling prevents JSON parsing empty response strings
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }

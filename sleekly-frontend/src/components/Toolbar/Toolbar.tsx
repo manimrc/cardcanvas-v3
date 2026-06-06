@@ -1,3 +1,10 @@
+/**
+ * @file Toolbar.tsx
+ * @description Whiteboard action control header.
+ * Consolidates card creation triggers, workspace renaming inputs, global card text searches,
+ * and application color theme (light/dark mode) toggles.
+ */
+
 'use client';
 import {
   Type, FileText, Search,

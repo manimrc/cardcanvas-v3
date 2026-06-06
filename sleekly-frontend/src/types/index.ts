@@ -1,3 +1,9 @@
+/**
+ * @file index.ts (types)
+ * @description Core Domain Types for the Sleekly client and server interactions.
+ * Defines elements, whiteboard boards, workspace folders, and the emotional tracking journal entry models.
+ */
+
 export type CardType = 'richtext' | 'link' | 'image' | 'pdf' | 'article';
 
 export interface Card {
@@ -5,15 +11,15 @@ export interface Card {
   boardId: string;
   type: CardType;
   title: string;
-  content: string;       // Rich text HTML content
+  content: string;       // Rich text HTML (contains embedded typography metadata)
   url?: string;
   tags?: string[];
   color: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  zIndex?: number;
+  x: number;             // Absolute X position on the infinite whiteboard grid
+  y: number;             // Absolute Y position on the infinite whiteboard grid
+  width: number;         // Layout width in pixels
+  height: number;        // Layout height in pixels
+  zIndex?: number;       // Stacking hierarchy index
   isLocked?: boolean;
   createdAt: string;
   updatedAt: string;

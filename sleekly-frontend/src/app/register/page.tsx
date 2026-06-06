@@ -1,3 +1,10 @@
+/**
+ * @file register/page.tsx
+ * @description Account creation page.
+ * Creates credentials, stores session cookies, and displays the secret recovery key
+ * which is critical for future password recoveries.
+ */
+
 'use client';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
